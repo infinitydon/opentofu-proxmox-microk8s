@@ -26,14 +26,13 @@ if [[ "$enable_multus" == true ]]; then
   curl -fsSL "$manifest_url" \
     | sed \
         -e "s|ghcr.io/k8snetworkplumbingwg/multus-cni:snapshot-thick|ghcr.io/k8snetworkplumbingwg/multus-cni:${multus_version}-thick|g" \
-        -e '/"chrootDir": "\/hostroot",/a\        "binDir": "/var/snap/microk8s/current/opt/cni/bin",' \
         -e 's|path: /etc/cni/net.d$|path: /var/snap/microk8s/current/args/cni-network/|' \
         -e 's|path: /opt/cni/bin$|path: /var/snap/microk8s/current/opt/cni/bin/|' \
     > "$manifest"
 
   microk8s kubectl apply -f "$manifest"
   microk8s kubectl patch daemonset kube-multus-ds -n kube-system --type=strategic \
-    -p "{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"kube-multus\",\"resources\":{\"requests\":{\"cpu\":\"100m\",\"memory\":\"${multus_memory_request}\"},\"limits\":{\"cpu\":\"100m\",\"memory\":\"${multus_memory_limit}\"}}}]}}}}"
+    -p "{\"spec\":{\"template\":{\"spec\":{\"volumes\":[{\"name\":\"snap-cnibin\",\"hostPath\":{\"path\":\"/snap/microk8s/current/opt/cni/bin/\"}}],\"containers\":[{\"name\":\"kube-multus\",\"resources\":{\"requests\":{\"cpu\":\"100m\",\"memory\":\"${multus_memory_request}\"},\"limits\":{\"cpu\":\"100m\",\"memory\":\"${multus_memory_limit}\"}},\"volumeMounts\":[{\"name\":\"snap-cnibin\",\"mountPath\":\"/snap/microk8s/current/opt/cni/bin\",\"readOnly\":true}]}]}}}}"
   # Remove pods from the previous template immediately. This also recovers upgrades
   # where an old thick-plugin pod cannot cleanly terminate after its CNI path moves.
   microk8s kubectl delete pods -n kube-system -l app=multus \
