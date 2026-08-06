@@ -5,17 +5,25 @@ locals {
     if name != local.primary_control_plane_name
   }
   control_plane_ipv4 = {
-    for name, vm in proxmox_virtual_environment_vm.control_plane : name => one(vm.ipv4_addresses[0])
+    for name, vm in proxmox_virtual_environment_vm.control_plane : name => one(
+      vm.ipv4_addresses[index(
+        [for mac in vm.mac_addresses : lower(mac)],
+        lower(vm.network_device[0].mac_address)
+      )]
+    )
   }
   worker_ipv4 = {
-    for name, vm in proxmox_virtual_environment_vm.worker : name => one(vm.ipv4_addresses[0])
+    for name, vm in proxmox_virtual_environment_vm.worker : name => one(
+      vm.ipv4_addresses[index(
+        [for mac in vm.mac_addresses : lower(mac)],
+        lower(vm.network_device[0].mac_address)
+      )]
+    )
   }
   worker_data_macs = {
-    for name, vm in proxmox_virtual_environment_vm.worker : name => slice(
-      vm.mac_addresses,
-      1,
-      1 + var.worker_data_nic_count
-    )
+    for name, vm in proxmox_virtual_environment_vm.worker : name => [
+      for device in slice(vm.network_device, 1, 1 + var.worker_data_nic_count) : device.mac_address
+    ]
   }
   primary_control_plane_ipv4 = local.control_plane_ipv4[local.primary_control_plane_name]
   microk8s_minor             = split("/", var.microk8s_channel)[0]
