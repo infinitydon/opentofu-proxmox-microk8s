@@ -96,6 +96,24 @@ variable "enable_multus" {
   default = true
 }
 
+variable "multus_version" {
+  description = "Pinned upstream Multus CNI release used for the thick-plugin deployment."
+  type        = string
+  default     = "v4.3.0"
+}
+
+variable "multus_memory_request" {
+  description = "Memory request for each upstream Multus daemon."
+  type        = string
+  default     = "256Mi"
+}
+
+variable "multus_memory_limit" {
+  description = "Memory limit for each upstream Multus daemon."
+  type        = string
+  default     = "512Mi"
+}
+
 variable "microk8s_channel" {
   type    = string
   default = "1.35/stable"

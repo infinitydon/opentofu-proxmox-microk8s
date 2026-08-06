@@ -34,5 +34,8 @@ output "cluster_options" {
     hugepages_2m            = var.hugepages_2m
     enable_hostpath_storage = var.enable_hostpath_storage
     enable_multus           = var.enable_multus
+    multus_version          = var.multus_version
+    multus_memory_request   = var.multus_memory_request
+    multus_memory_limit     = var.multus_memory_limit
   }
 }

@@ -41,11 +41,16 @@ module "microk8s" {
 
   enable_hostpath_storage = true
   enable_multus           = true
+  multus_version          = "v4.3.0"
+  multus_memory_request   = "256Mi"
+  multus_memory_limit     = "512Mi"
   microk8s_channel        = "1.35/stable"
 }
 ```
 
 The `scripts` directory contains idempotent helpers for MicroK8s, worker
 VFIO/hugepages/DPDK, addons, and upstream `kubectl` plus Helm on control-plane
-nodes. When both hugepage sizes are enabled, 1 GiB pages are reserved at kernel
+nodes. Multus uses the pinned upstream thick-plugin image rather than the MicroK8s
+community addon. Its daemon defaults to a 256 MiB request and 512 MiB limit, replacing
+the upstream quickstart manifest's 50 MiB values. When both hugepage sizes are enabled, 1 GiB pages are reserved at kernel
 boot and 2 MiB pages are allocated afterward by sysctl.
