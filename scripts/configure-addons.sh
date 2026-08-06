@@ -26,6 +26,7 @@ if [[ "$enable_multus" == true ]]; then
   curl -fsSL "$manifest_url" \
     | sed \
         -e "s|ghcr.io/k8snetworkplumbingwg/multus-cni:snapshot-thick|ghcr.io/k8snetworkplumbingwg/multus-cni:${multus_version}-thick|g" \
+        -e '/"chrootDir": "\/hostroot",/a\        "binDir": "/var/snap/microk8s/current/opt/cni/bin",' \
         -e 's|path: /etc/cni/net.d$|path: /var/snap/microk8s/current/args/cni-network/|' \
         -e 's|path: /opt/cni/bin$|path: /var/snap/microk8s/current/opt/cni/bin/|' \
     > "$manifest"
