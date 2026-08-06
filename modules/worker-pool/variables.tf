@@ -1,0 +1,16 @@
+variable "node_name" { type = string }
+variable "template_vm_id" { type = number }
+variable "pool_name" { type = string }
+variable "name_prefix" { type = string }
+variable "count_nodes" { type = number }
+variable "cpu_cores" { type = number }
+variable "memory_mb" { type = number }
+variable "disk_gb" { type = number }
+variable "storage" { type = string }
+variable "bridge" { type = string }
+variable "data_nic_count" { type = number }
+variable "vfio_nic_indexes" { type = set(number) }
+variable "hugepages_1g" { type = number }
+variable "hugepages_2m" { type = number }
+variable "os_reserved_memory_mb" { type = number }
+variable "node_labels" { type = map(string) }

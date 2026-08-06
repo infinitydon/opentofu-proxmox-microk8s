@@ -1,166 +1,61 @@
-locals {
-  control_planes = {
-    for i in range(var.control_plane_count) : format("microk8s-cp-%02d", i + 1) => {
-      index = i
-    }
-  }
+module "control_plane" {
+  source = "./modules/control-plane"
 
-  legacy_worker_pool = {
-    count                 = var.worker_count
-    cpu_cores             = null
-    memory_mb             = null
-    disk_gb               = null
-    storage               = null
-    bridge                = null
-    data_nic_count        = null
-    vfio_nic_indexes      = null
-    hugepages_1g          = null
-    hugepages_2m          = null
-    os_reserved_memory_mb = null
-    node_labels           = null
-  }
+  node_name      = var.node_name
+  template_vm_id = var.template_vm_id
+  count_nodes    = var.control_plane.count
+  name_prefix    = var.control_plane.name_prefix
+  cpu_cores      = var.control_plane.cpu_cores
+  memory_mb      = var.control_plane.memory_mb
+  disk_gb        = var.control_plane.disk_gb
+  storage        = var.control_plane.storage
+  bridge         = var.control_plane.bridge
+}
 
-  configured_worker_pools = merge(var.worker_pools, {
-    for pool_name in toset(length(var.worker_pools) == 0 ? ["default"] : []) :
-    pool_name => local.legacy_worker_pool
+module "worker_pool" {
+  for_each = var.worker_pools
+  source   = "./modules/worker-pool"
+
+  node_name             = var.node_name
+  template_vm_id        = var.template_vm_id
+  pool_name             = each.key
+  name_prefix           = each.value.name_prefix
+  count_nodes           = each.value.count
+  cpu_cores             = each.value.cpu_cores
+  memory_mb             = each.value.memory_mb
+  disk_gb               = each.value.disk_gb
+  storage               = each.value.storage
+  bridge                = each.value.bridge
+  data_nic_count        = each.value.data_nic_count
+  vfio_nic_indexes      = each.value.vfio_nic_indexes
+  hugepages_1g          = each.value.hugepages_1g
+  hugepages_2m          = each.value.hugepages_2m
+  os_reserved_memory_mb = each.value.os_reserved_memory_mb
+  node_labels = merge(each.value.node_labels, {
+    "opentofu.infinitydon.com/worker-pool" = each.key
   })
-
-  effective_worker_pools = {
-    for pool_name, pool in local.configured_worker_pools : pool_name => {
-      count                 = pool.count
-      cpu_cores             = coalesce(pool.cpu_cores, var.worker_cpu_cores)
-      memory_mb             = coalesce(pool.memory_mb, var.worker_memory_mb)
-      disk_gb               = coalesce(pool.disk_gb, var.worker_disk_gb)
-      storage               = coalesce(pool.storage, var.storage)
-      bridge                = coalesce(pool.bridge, var.bridge)
-      data_nic_count        = coalesce(pool.data_nic_count, var.worker_data_nic_count)
-      vfio_nic_indexes      = coalesce(pool.vfio_nic_indexes, var.worker_vfio_nic_indexes)
-      hugepages_1g          = coalesce(pool.hugepages_1g, var.hugepages_1g)
-      hugepages_2m          = coalesce(pool.hugepages_2m, var.hugepages_2m)
-      os_reserved_memory_mb = coalesce(pool.os_reserved_memory_mb, var.worker_os_reserved_memory_mb)
-      node_labels = distinct(concat(
-        var.worker_node_labels,
-        coalesce(pool.node_labels, []),
-        pool_name == "default" ? [] : ["opentofu.infinitydon.com/worker-pool=${pool_name}"],
-      ))
-    }
-  }
-
-  workers = merge([
-    for pool_name, pool in local.effective_worker_pools : {
-      for i in range(pool.count) :
-      format("%s-%02d", pool_name == "default" ? "microk8s-worker" : "microk8s-${pool_name}", i + 1) => merge(pool, {
-        index     = i
-        pool_name = pool_name
-      })
-    }
-  ]...)
 }
 
-resource "proxmox_virtual_environment_vm" "control_plane" {
-  for_each = local.control_planes
+locals {
+  control_planes = module.control_plane.nodes
+  workers        = merge([for pool in module.worker_pool : pool.nodes]...)
 
-  name      = each.key
-  node_name = var.node_name
-  tags      = ["microk8s", "control-plane", "opentofu"]
-
-  clone {
-    vm_id        = var.template_vm_id
-    node_name    = var.node_name
-    datastore_id = var.storage
-    full         = true
-    retries      = 3
+  worker_node_labels = {
+    for name, worker in local.workers : name => [
+      for key in sort(keys(worker.node_labels)) : "${key}=${worker.node_labels[key]}"
+    ]
   }
 
-  cpu {
-    cores = var.control_plane_cpu_cores
-    type  = "host"
-  }
-
-  memory {
-    dedicated = var.control_plane_memory_mb
-    floating  = var.control_plane_memory_mb
-  }
-
-  disk {
-    datastore_id = var.storage
-    interface    = "scsi0"
-    size         = var.control_plane_disk_gb
-  }
-
-  network_device {
-    bridge = var.bridge
-    model  = "virtio"
-    queues = var.control_plane_cpu_cores
-  }
-
-  initialization {
-    datastore_id = var.storage
-    ip_config {
-      ipv4 { address = "dhcp" }
-    }
-  }
-
-  agent { enabled = true }
-  started         = true
-  stop_on_destroy = true
 }
 
-resource "proxmox_virtual_environment_vm" "worker" {
-  for_each = local.workers
+module "cluster_automation" {
+  source = "./modules/cluster-automation"
 
-  name      = each.key
-  node_name = var.node_name
-  machine   = "q35,viommu=intel"
-  tags      = ["microk8s", "worker", "opentofu", "pool-${each.value.pool_name}"]
-
-  clone {
-    vm_id        = var.template_vm_id
-    node_name    = var.node_name
-    datastore_id = each.value.storage
-    full         = true
-    retries      = 3
-  }
-
-  cpu {
-    cores = each.value.cpu_cores
-    type  = "host"
-  }
-
-  memory {
-    dedicated = each.value.memory_mb
-    floating  = each.value.memory_mb
-  }
-
-  disk {
-    datastore_id = each.value.storage
-    interface    = "scsi0"
-    size         = each.value.disk_gb
-  }
-
-  network_device {
-    bridge = each.value.bridge
-    model  = "virtio"
-    queues = each.value.cpu_cores
-  }
-
-  dynamic "network_device" {
-    for_each = range(each.value.data_nic_count)
-    content {
-      bridge = each.value.bridge
-      model  = "virtio"
-      queues = each.value.cpu_cores
-    }
-  }
-
-  initialization {
-    datastore_id = each.value.storage
-    ip_config {
-      ipv4 { address = "dhcp" }
-    }
-  }
-
-  agent { enabled = true }
-  started         = true
-  stop_on_destroy = true
+  control_planes             = local.control_planes
+  workers                    = local.workers
+  worker_node_labels         = local.worker_node_labels
+  kubernetes                 = var.kubernetes
+  addons                     = var.addons
+  automation                 = var.automation
+  guest_ssh_private_key_path = var.guest_ssh_private_key_path
 }

@@ -1,35 +1,35 @@
+
+
 locals {
+  control_planes     = var.control_planes
+  workers            = var.workers
+  worker_node_labels = var.worker_node_labels
+
+  microk8s_channel        = var.kubernetes.microk8s_channel
+  k9s_version             = var.kubernetes.k9s_version
+  kubectl_version         = var.kubernetes.kubectl_version
+  helm_version            = var.kubernetes.helm_version
+  enable_hostpath_storage = var.addons.hostpath_storage
+  enable_multus           = var.addons.multus.enabled
+  multus_version          = var.addons.multus.version
+  multus_memory_request   = var.addons.multus.memory_request
+  multus_memory_limit     = var.addons.multus.memory_limit
+  automation_enabled      = var.automation.enabled
+  guest_ssh_user          = var.automation.ssh_user
+  guest_ssh_port          = var.automation.ssh_port
+  automation_revision     = var.automation.revision
+  worker_reboot_wait      = var.automation.reboot_wait
+
   primary_control_plane_name = sort(keys(local.control_planes))[0]
   secondary_control_planes = {
     for name, node in local.control_planes : name => node
     if name != local.primary_control_plane_name
   }
-  control_plane_ipv4 = {
-    for name, vm in proxmox_virtual_environment_vm.control_plane : name => one(
-      vm.ipv4_addresses[index(
-        [for mac in vm.mac_addresses : lower(mac)],
-        lower(vm.network_device[0].mac_address)
-      )]
-    )
-  }
-  worker_ipv4 = {
-    for name, vm in proxmox_virtual_environment_vm.worker : name => one(
-      vm.ipv4_addresses[index(
-        [for mac in vm.mac_addresses : lower(mac)],
-        lower(vm.network_device[0].mac_address)
-      )]
-    )
-  }
-  worker_data_macs = {
-    for name, vm in proxmox_virtual_environment_vm.worker : name => [
-      for device in slice(vm.network_device, 1, 1 + local.workers[name].data_nic_count) : device.mac_address
-    ]
-  }
-  worker_node_labels = {
-    for name, worker in local.workers : name => worker.node_labels
-  }
+  control_plane_ipv4         = { for name, node in local.control_planes : name => node.management_ipv4 }
+  worker_ipv4                = { for name, node in local.workers : name => node.management_ipv4 }
+  worker_data_macs           = { for name, node in local.workers : name => node.data_macs }
   primary_control_plane_ipv4 = local.control_plane_ipv4[local.primary_control_plane_name]
-  microk8s_minor             = split("/", var.microk8s_channel)[0]
+  microk8s_minor             = split("/", local.microk8s_channel)[0]
   expected_node_names        = concat(sort(keys(local.control_planes)), sort(keys(local.workers)))
   max_worker_hugepage_mb = {
     for name, worker in local.workers : name => worker.memory_mb - worker.os_reserved_memory_mb
@@ -38,28 +38,28 @@ locals {
 }
 
 resource "random_password" "control_plane_join_token" {
-  for_each = var.automation_enabled ? local.secondary_control_planes : {}
+  for_each = local.automation_enabled ? local.secondary_control_planes : {}
 
   length  = 32
   special = false
 }
 
 resource "random_password" "worker_join_token" {
-  for_each = var.automation_enabled ? local.workers : {}
+  for_each = local.automation_enabled ? local.workers : {}
 
   length  = 32
   special = false
 }
 
 resource "terraform_data" "control_plane_install" {
-  for_each = var.automation_enabled ? local.control_planes : {}
+  for_each = local.automation_enabled ? local.control_planes : {}
 
   triggers_replace = [
-    proxmox_virtual_environment_vm.control_plane[each.key].id,
-    var.control_plane_disk_gb,
-    var.microk8s_channel,
-    var.automation_revision,
-    filesha256("${path.module}/scripts/install-microk8s.sh"),
+    each.value.id,
+    each.value.disk_gb,
+    local.microk8s_channel,
+    local.automation_revision,
+    filesha256("${path.module}/../../scripts/install-microk8s.sh"),
   ]
 
   lifecycle {
@@ -72,14 +72,14 @@ resource "terraform_data" "control_plane_install" {
   connection {
     type        = "ssh"
     host        = local.control_plane_ipv4[each.key]
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
 
   provisioner "file" {
-    source      = "${path.module}/scripts/install-microk8s.sh"
+    source      = "${path.module}/../../scripts/install-microk8s.sh"
     destination = "/tmp/install-microk8s.sh"
   }
 
@@ -88,7 +88,7 @@ resource "terraform_data" "control_plane_install" {
       local.cloud_init_wait_command,
       "echo 'cloud-init completed on ${each.key}'",
       "sed -i 's/\\r$//' /tmp/install-microk8s.sh",
-      "sudo bash /tmp/install-microk8s.sh '${var.microk8s_channel}' >/tmp/opentofu-install-microk8s.log 2>&1 || { rc=$?; echo 'MicroK8s installation failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-install-microk8s.log >&2; exit $rc; }",
+      "sudo bash /tmp/install-microk8s.sh '${local.microk8s_channel}' >/tmp/opentofu-install-microk8s.log 2>&1 || { rc=$?; echo 'MicroK8s installation failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-install-microk8s.log >&2; exit $rc; }",
       "echo 'MicroK8s installation completed on ${each.key}'",
       "if ! sudo test -e /var/lib/opentofu-control-plane-ip; then printf '%s\\n' '${local.control_plane_ipv4[each.key]}' | sudo tee /var/lib/opentofu-control-plane-ip >/dev/null; fi",
     ]
@@ -96,14 +96,14 @@ resource "terraform_data" "control_plane_install" {
 }
 
 resource "terraform_data" "worker_install" {
-  for_each = var.automation_enabled ? local.workers : {}
+  for_each = local.automation_enabled ? local.workers : {}
 
   triggers_replace = [
-    proxmox_virtual_environment_vm.worker[each.key].id,
+    each.value.id,
     each.value.disk_gb,
-    var.microk8s_channel,
-    var.automation_revision,
-    filesha256("${path.module}/scripts/install-microk8s.sh"),
+    local.microk8s_channel,
+    local.automation_revision,
+    filesha256("${path.module}/../../scripts/install-microk8s.sh"),
   ]
 
   lifecycle {
@@ -120,14 +120,14 @@ resource "terraform_data" "worker_install" {
   connection {
     type        = "ssh"
     host        = local.worker_ipv4[each.key]
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
 
   provisioner "file" {
-    source      = "${path.module}/scripts/install-microk8s.sh"
+    source      = "${path.module}/../../scripts/install-microk8s.sh"
     destination = "/tmp/install-microk8s.sh"
   }
 
@@ -136,14 +136,14 @@ resource "terraform_data" "worker_install" {
       local.cloud_init_wait_command,
       "echo 'cloud-init completed on ${each.key}'",
       "sed -i 's/\\r$//' /tmp/install-microk8s.sh",
-      "sudo bash /tmp/install-microk8s.sh '${var.microk8s_channel}' >/tmp/opentofu-install-microk8s.log 2>&1 || { rc=$?; echo 'MicroK8s installation failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-install-microk8s.log >&2; exit $rc; }",
+      "sudo bash /tmp/install-microk8s.sh '${local.microk8s_channel}' >/tmp/opentofu-install-microk8s.log 2>&1 || { rc=$?; echo 'MicroK8s installation failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-install-microk8s.log >&2; exit $rc; }",
       "echo 'MicroK8s installation completed on ${each.key}'",
     ]
   }
 }
 
 resource "terraform_data" "control_plane_reboot" {
-  for_each = var.automation_enabled ? local.control_planes : {}
+  for_each = local.automation_enabled ? local.control_planes : {}
 
   depends_on       = [terraform_data.control_plane_install]
   triggers_replace = [terraform_data.control_plane_install[each.key].id]
@@ -151,8 +151,8 @@ resource "terraform_data" "control_plane_reboot" {
   connection {
     type        = "ssh"
     host        = local.control_plane_ipv4[each.key]
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
@@ -165,29 +165,29 @@ resource "terraform_data" "control_plane_reboot" {
 }
 
 resource "time_sleep" "control_plane_reboot_wait" {
-  for_each = var.automation_enabled ? local.control_planes : {}
+  for_each = local.automation_enabled ? local.control_planes : {}
 
   depends_on      = [terraform_data.control_plane_reboot]
-  create_duration = var.worker_reboot_wait
+  create_duration = local.worker_reboot_wait
   triggers = {
     reboot_id = terraform_data.control_plane_reboot[each.key].id
   }
 }
 
 resource "terraform_data" "control_plane_ip_guard" {
-  for_each = var.automation_enabled ? local.control_planes : {}
+  for_each = local.automation_enabled ? local.control_planes : {}
 
   depends_on = [time_sleep.control_plane_reboot_wait]
   triggers_replace = [
-    proxmox_virtual_environment_vm.control_plane[each.key].id,
+    each.value.id,
     local.control_plane_ipv4[each.key],
   ]
 
   connection {
     type        = "ssh"
     host        = local.control_plane_ipv4[each.key]
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
@@ -200,7 +200,7 @@ resource "terraform_data" "control_plane_ip_guard" {
 }
 
 resource "terraform_data" "control_plane_verify" {
-  for_each = var.automation_enabled ? local.control_planes : {}
+  for_each = local.automation_enabled ? local.control_planes : {}
 
   depends_on       = [terraform_data.control_plane_ip_guard]
   triggers_replace = [time_sleep.control_plane_reboot_wait[each.key].id]
@@ -208,8 +208,8 @@ resource "terraform_data" "control_plane_verify" {
   connection {
     type        = "ssh"
     host        = local.control_plane_ipv4[each.key]
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
@@ -224,21 +224,21 @@ resource "terraform_data" "control_plane_verify" {
 }
 
 resource "terraform_data" "worker_configuration" {
-  for_each = var.automation_enabled ? local.workers : {}
+  for_each = local.automation_enabled ? local.workers : {}
 
   depends_on = [terraform_data.worker_install]
   triggers_replace = {
-    worker_vm_id            = proxmox_virtual_environment_vm.worker[each.key].id
+    worker_vm_id            = each.value.id
     pool_name               = each.value.pool_name
     hugepages_1g            = each.value.hugepages_1g
     hugepages_2m            = each.value.hugepages_2m
     os_reserved_memory_mb   = each.value.os_reserved_memory_mb
     data_macs_csv           = join(",", local.worker_data_macs[each.key])
     vfio_macs_csv           = join(",", [for i, mac in local.worker_data_macs[each.key] : mac if contains(each.value.vfio_nic_indexes, i)])
-    automation_revision     = var.automation_revision
-    configure_script_sha256 = filesha256("${path.module}/scripts/configure-worker.sh")
-    bind_script_sha256      = filesha256("${path.module}/scripts/bind-worker-vfio")
-    verify_script_sha256    = filesha256("${path.module}/scripts/verify-worker-config")
+    automation_revision     = local.automation_revision
+    configure_script_sha256 = filesha256("${path.module}/../../scripts/configure-worker.sh")
+    bind_script_sha256      = filesha256("${path.module}/../../scripts/bind-worker-vfio")
+    verify_script_sha256    = filesha256("${path.module}/../../scripts/verify-worker-config")
   }
 
   input = {
@@ -255,30 +255,30 @@ resource "terraform_data" "worker_configuration" {
   connection {
     type        = "ssh"
     host        = local.worker_ipv4[each.key]
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
 
   provisioner "file" {
-    source      = "${path.module}/scripts/configure-worker.sh"
+    source      = "${path.module}/../../scripts/configure-worker.sh"
     destination = "/tmp/configure-worker.sh"
   }
   provisioner "file" {
-    source      = "${path.module}/scripts/bind-worker-vfio"
+    source      = "${path.module}/../../scripts/bind-worker-vfio"
     destination = "/tmp/bind-worker-vfio"
   }
   provisioner "file" {
-    source      = "${path.module}/scripts/worker-vfio-bind.service"
+    source      = "${path.module}/../../scripts/worker-vfio-bind.service"
     destination = "/tmp/worker-vfio-bind.service"
   }
   provisioner "file" {
-    source      = "${path.module}/scripts/verify-worker-config"
+    source      = "${path.module}/../../scripts/verify-worker-config"
     destination = "/tmp/verify-worker-config"
   }
   provisioner "file" {
-    source      = "${path.module}/scripts/worker-config-verify.service"
+    source      = "${path.module}/../../scripts/worker-config-verify.service"
     destination = "/tmp/worker-config-verify.service"
   }
 
@@ -292,7 +292,7 @@ resource "terraform_data" "worker_configuration" {
 }
 
 resource "terraform_data" "worker_reboot" {
-  for_each = var.automation_enabled ? local.workers : {}
+  for_each = local.automation_enabled ? local.workers : {}
 
   depends_on       = [terraform_data.worker_configuration]
   triggers_replace = [terraform_data.worker_configuration[each.key].id]
@@ -300,8 +300,8 @@ resource "terraform_data" "worker_reboot" {
   connection {
     type        = "ssh"
     host        = local.worker_ipv4[each.key]
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
@@ -314,17 +314,17 @@ resource "terraform_data" "worker_reboot" {
 }
 
 resource "time_sleep" "worker_reboot_wait" {
-  for_each = var.automation_enabled ? local.workers : {}
+  for_each = local.automation_enabled ? local.workers : {}
 
   depends_on      = [terraform_data.worker_reboot]
-  create_duration = var.worker_reboot_wait
+  create_duration = local.worker_reboot_wait
   triggers = {
     reboot_id = terraform_data.worker_reboot[each.key].id
   }
 }
 
 resource "terraform_data" "worker_verify" {
-  for_each = var.automation_enabled ? local.workers : {}
+  for_each = local.automation_enabled ? local.workers : {}
 
   depends_on       = [time_sleep.worker_reboot_wait]
   triggers_replace = [time_sleep.worker_reboot_wait[each.key].id]
@@ -332,8 +332,8 @@ resource "terraform_data" "worker_verify" {
   connection {
     type        = "ssh"
     host        = local.worker_ipv4[each.key]
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
@@ -351,16 +351,16 @@ resource "terraform_data" "worker_verify" {
 }
 
 resource "terraform_data" "control_plane_token" {
-  for_each = var.automation_enabled ? local.secondary_control_planes : {}
+  for_each = local.automation_enabled ? local.secondary_control_planes : {}
 
   depends_on       = [terraform_data.control_plane_verify]
-  triggers_replace = [random_password.control_plane_join_token[each.key].result, var.automation_revision]
+  triggers_replace = [random_password.control_plane_join_token[each.key].result, local.automation_revision]
 
   connection {
     type        = "ssh"
     host        = local.primary_control_plane_ipv4
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
@@ -373,7 +373,7 @@ resource "terraform_data" "control_plane_token" {
 }
 
 resource "terraform_data" "control_plane_join" {
-  for_each = var.automation_enabled ? local.secondary_control_planes : {}
+  for_each = local.automation_enabled ? local.secondary_control_planes : {}
 
   depends_on       = [terraform_data.control_plane_token]
   triggers_replace = [terraform_data.control_plane_token[each.key].id]
@@ -381,8 +381,8 @@ resource "terraform_data" "control_plane_join" {
   connection {
     type        = "ssh"
     host        = local.control_plane_ipv4[each.key]
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
@@ -395,20 +395,20 @@ resource "terraform_data" "control_plane_join" {
 }
 
 resource "terraform_data" "worker_token" {
-  for_each = var.automation_enabled ? local.workers : {}
+  for_each = local.automation_enabled ? local.workers : {}
 
   depends_on = [
     terraform_data.control_plane_verify,
     terraform_data.control_plane_join,
     terraform_data.worker_verify,
   ]
-  triggers_replace = [random_password.worker_join_token[each.key].result, var.automation_revision]
+  triggers_replace = [random_password.worker_join_token[each.key].result, local.automation_revision]
 
   connection {
     type        = "ssh"
     host        = local.primary_control_plane_ipv4
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
@@ -421,20 +421,20 @@ resource "terraform_data" "worker_token" {
 }
 
 resource "terraform_data" "worker_join" {
-  for_each = var.automation_enabled ? local.workers : {}
+  for_each = local.automation_enabled ? local.workers : {}
 
   depends_on = [terraform_data.worker_token]
   triggers_replace = [
     terraform_data.worker_token[each.key].id,
     local.primary_control_plane_ipv4,
-    var.automation_revision,
+    local.automation_revision,
   ]
 
   connection {
     type        = "ssh"
     host        = local.worker_ipv4[each.key]
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
@@ -447,7 +447,7 @@ resource "terraform_data" "worker_join" {
 }
 
 resource "terraform_data" "worker_post_join_verify" {
-  for_each = var.automation_enabled ? local.workers : {}
+  for_each = local.automation_enabled ? local.workers : {}
 
   depends_on       = [terraform_data.worker_join]
   triggers_replace = [terraform_data.worker_join[each.key].id]
@@ -455,8 +455,8 @@ resource "terraform_data" "worker_post_join_verify" {
   connection {
     type        = "ssh"
     host        = local.worker_ipv4[each.key]
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
@@ -472,13 +472,13 @@ resource "terraform_data" "worker_post_join_verify" {
 }
 
 resource "terraform_data" "worker_labels" {
-  for_each = var.automation_enabled ? local.workers : {}
+  for_each = local.automation_enabled ? local.workers : {}
 
   depends_on = [terraform_data.worker_post_join_verify]
   triggers_replace = {
     worker_join_verification_id = terraform_data.worker_post_join_verify[each.key].id
     labels_sha256               = sha256(jsonencode(local.worker_node_labels[each.key]))
-    script_sha256               = filesha256("${path.module}/scripts/configure-worker-labels.sh")
+    script_sha256               = filesha256("${path.module}/../../scripts/configure-worker-labels.sh")
   }
 
   input = {
@@ -493,14 +493,14 @@ resource "terraform_data" "worker_labels" {
   connection {
     type        = "ssh"
     host        = local.primary_control_plane_ipv4
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
 
   provisioner "file" {
-    source      = "${path.module}/scripts/configure-worker-labels.sh"
+    source      = "${path.module}/../../scripts/configure-worker-labels.sh"
     destination = "/tmp/configure-worker-labels.sh"
   }
 
@@ -513,74 +513,74 @@ resource "terraform_data" "worker_labels" {
 }
 
 resource "terraform_data" "addons" {
-  count = var.automation_enabled ? 1 : 0
+  count = local.automation_enabled ? 1 : 0
 
   depends_on = [
     terraform_data.control_plane_join,
     terraform_data.worker_labels,
   ]
   triggers_replace = [
-    var.enable_hostpath_storage,
-    var.enable_multus,
-    var.multus_version,
-    var.multus_memory_request,
-    var.multus_memory_limit,
-    var.automation_revision,
-    filesha256("${path.module}/scripts/configure-addons.sh"),
+    local.enable_hostpath_storage,
+    local.enable_multus,
+    local.multus_version,
+    local.multus_memory_request,
+    local.multus_memory_limit,
+    local.automation_revision,
+    filesha256("${path.module}/../../scripts/configure-addons.sh"),
   ]
 
   connection {
     type        = "ssh"
     host        = local.primary_control_plane_ipv4
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
 
   provisioner "file" {
-    source      = "${path.module}/scripts/configure-addons.sh"
+    source      = "${path.module}/../../scripts/configure-addons.sh"
     destination = "/tmp/configure-addons.sh"
   }
 
   provisioner "remote-exec" {
     inline = [
       "sed -i 's/\\r$//' /tmp/configure-addons.sh",
-      "sudo bash /tmp/configure-addons.sh '${var.enable_hostpath_storage}' '${var.enable_multus}' '${var.multus_version}' '${var.multus_memory_request}' '${var.multus_memory_limit}' >/tmp/opentofu-configure-addons.log 2>&1 || { rc=$?; echo 'Addon configuration failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-configure-addons.log >&2; exit $rc; }",
+      "sudo bash /tmp/configure-addons.sh '${local.enable_hostpath_storage}' '${local.enable_multus}' '${local.multus_version}' '${local.multus_memory_request}' '${local.multus_memory_limit}' >/tmp/opentofu-configure-addons.log 2>&1 || { rc=$?; echo 'Addon configuration failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-configure-addons.log >&2; exit $rc; }",
       "echo 'Cluster addons configured'",
     ]
   }
 }
 
 resource "terraform_data" "control_plane_tools" {
-  for_each = var.automation_enabled ? local.control_planes : {}
+  for_each = local.automation_enabled ? local.control_planes : {}
 
   depends_on = [terraform_data.addons]
   triggers_replace = {
-    control_plane_vm_id = proxmox_virtual_environment_vm.control_plane[each.key].id
-    microk8s_channel    = var.microk8s_channel
-    k9s_version         = var.k9s_version
-    kubectl_version     = var.kubectl_version
-    helm_version        = var.helm_version
-    automation_revision = var.automation_revision
-    script_sha256       = filesha256("${path.module}/scripts/configure-control-plane-tools.sh")
+    control_plane_vm_id = each.value.id
+    microk8s_channel    = local.microk8s_channel
+    k9s_version         = local.k9s_version
+    kubectl_version     = local.kubectl_version
+    helm_version        = local.helm_version
+    automation_revision = local.automation_revision
+    script_sha256       = filesha256("${path.module}/../../scripts/configure-control-plane-tools.sh")
   }
 
   input = {
     operation                   = "configure_control_plane_tools"
     node                        = each.key
-    normal_user                 = var.guest_ssh_user
-    kubectl_version             = var.kubectl_version
+    normal_user                 = local.guest_ssh_user
+    kubectl_version             = local.kubectl_version
     enable_kubectl_completion   = true
-    install_helm_version        = var.helm_version
-    install_k9s_version         = var.k9s_version
+    install_helm_version        = local.helm_version
+    install_k9s_version         = local.k9s_version
     verify_k9s_package_checksum = true
     verify_normal_user_access   = true
   }
 
   lifecycle {
     precondition {
-      condition     = join(".", slice(split(".", var.kubectl_version), 0, 2)) == local.microk8s_minor
+      condition     = join(".", slice(split(".", local.kubectl_version), 0, 2)) == local.microk8s_minor
       error_message = "kubectl_version must use the same major.minor release as microk8s_channel."
     }
   }
@@ -588,28 +588,28 @@ resource "terraform_data" "control_plane_tools" {
   connection {
     type        = "ssh"
     host        = local.control_plane_ipv4[each.key]
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
 
   provisioner "file" {
-    source      = "${path.module}/scripts/configure-control-plane-tools.sh"
+    source      = "${path.module}/../../scripts/configure-control-plane-tools.sh"
     destination = "/tmp/configure-control-plane-tools.sh"
   }
 
   provisioner "remote-exec" {
     inline = [
       "sed -i 's/\\r$//' /tmp/configure-control-plane-tools.sh",
-      "sudo bash /tmp/configure-control-plane-tools.sh 'v${local.microk8s_minor}' '${var.k9s_version}' '${var.kubectl_version}' '${var.helm_version}' >/tmp/opentofu-control-plane-tools.log 2>&1 || { rc=$?; echo 'Control-plane tool installation failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-control-plane-tools.log >&2; exit $rc; }",
+      "sudo bash /tmp/configure-control-plane-tools.sh 'v${local.microk8s_minor}' '${local.k9s_version}' '${local.kubectl_version}' '${local.helm_version}' >/tmp/opentofu-control-plane-tools.log 2>&1 || { rc=$?; echo 'Control-plane tool installation failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-control-plane-tools.log >&2; exit $rc; }",
       "echo 'kubectl, Bash completion, Helm, and k9s verified on ${each.key}'",
     ]
   }
 }
 
 resource "terraform_data" "cluster_health" {
-  count = var.automation_enabled ? 1 : 0
+  count = local.automation_enabled ? 1 : 0
 
   depends_on = [
     terraform_data.control_plane_tools,
@@ -617,17 +617,17 @@ resource "terraform_data" "cluster_health" {
   ]
   triggers_replace = {
     expected_nodes_csv    = join(",", local.expected_node_names)
-    microk8s_channel      = var.microk8s_channel
-    hostpath_enabled      = var.enable_hostpath_storage
-    multus_enabled        = var.enable_multus
-    multus_version        = var.multus_version
-    multus_memory_request = var.multus_memory_request
-    multus_memory_limit   = var.multus_memory_limit
-    k9s_version           = var.k9s_version
-    kubectl_version       = var.kubectl_version
-    helm_version          = var.helm_version
-    automation_revision   = var.automation_revision
-    script_sha256         = filesha256("${path.module}/scripts/verify-cluster.sh")
+    microk8s_channel      = local.microk8s_channel
+    hostpath_enabled      = local.enable_hostpath_storage
+    multus_enabled        = local.enable_multus
+    multus_version        = local.multus_version
+    multus_memory_request = local.multus_memory_request
+    multus_memory_limit   = local.multus_memory_limit
+    k9s_version           = local.k9s_version
+    kubectl_version       = local.kubectl_version
+    helm_version          = local.helm_version
+    automation_revision   = local.automation_revision
+    script_sha256         = filesha256("${path.module}/../../scripts/verify-cluster.sh")
   }
 
   input = {
@@ -638,30 +638,33 @@ resource "terraform_data" "cluster_health" {
     verify_kubectl  = true
     verify_helm     = true
     verify_k9s      = true
-    kubectl_version = var.kubectl_version
-    helm_version    = var.helm_version
-    verify_hostpath = var.enable_hostpath_storage
-    verify_multus   = var.enable_multus
+    kubectl_version = local.kubectl_version
+    helm_version    = local.helm_version
+    verify_hostpath = local.enable_hostpath_storage
+    verify_multus   = local.enable_multus
   }
 
   connection {
     type        = "ssh"
     host        = local.primary_control_plane_ipv4
-    port        = var.guest_ssh_port
-    user        = var.guest_ssh_user
+    port        = local.guest_ssh_port
+    user        = local.guest_ssh_user
     private_key = file(var.guest_ssh_private_key_path)
     timeout     = "15m"
   }
 
   provisioner "file" {
-    source      = "${path.module}/scripts/verify-cluster.sh"
+    source      = "${path.module}/../../scripts/verify-cluster.sh"
     destination = "/tmp/verify-cluster.sh"
   }
 
   provisioner "remote-exec" {
     inline = [
       "sed -i 's/\\r$//' /tmp/verify-cluster.sh",
-      "sudo bash /tmp/verify-cluster.sh '${length(local.expected_node_names)}' '${join(",", local.expected_node_names)}' '${local.microk8s_minor}' '${var.enable_hostpath_storage}' '${var.enable_multus}' '${var.multus_version}' '${var.multus_memory_request}' '${var.multus_memory_limit}' '${local.primary_control_plane_ipv4}' '${var.k9s_version}' '${var.kubectl_version}' '${var.helm_version}'",
+      "sudo bash /tmp/verify-cluster.sh '${length(local.expected_node_names)}' '${join(",", local.expected_node_names)}' '${local.microk8s_minor}' '${local.enable_hostpath_storage}' '${local.enable_multus}' '${local.multus_version}' '${local.multus_memory_request}' '${local.multus_memory_limit}' '${local.primary_control_plane_ipv4}' '${local.k9s_version}' '${local.kubectl_version}' '${local.helm_version}'",
     ]
   }
 }
+
+
+

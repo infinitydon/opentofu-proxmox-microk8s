@@ -1,119 +1,56 @@
 variable "node_name" {
-  type    = string
-  default = "pve"
+  description = "Proxmox node that hosts all cluster VMs."
+  type        = string
+  default     = "pve"
 }
 
 variable "template_vm_id" {
-  type    = number
-  default = 9006
-}
-
-variable "storage" {
-  type    = string
-  default = "ebenezer-stor1"
-}
-
-variable "control_plane_count" {
-  type    = number
-  default = 1
-
-  validation {
-    condition     = var.control_plane_count >= 1
-    error_message = "At least one control-plane node is required."
-  }
-}
-
-variable "worker_count" {
-  type    = number
-  default = 2
-}
-
-variable "control_plane_cpu_cores" {
-  type    = number
-  default = 4
-}
-
-variable "control_plane_memory_mb" {
-  type    = number
-  default = 8192
-}
-
-variable "control_plane_disk_gb" {
-  type    = number
-  default = 50
-}
-
-variable "worker_cpu_cores" {
-  type    = number
-  default = 4
-}
-
-variable "worker_memory_mb" {
-  type    = number
-  default = 8192
-}
-
-variable "worker_disk_gb" {
-  type    = number
-  default = 50
-}
-
-variable "worker_os_reserved_memory_mb" {
-  description = "Worker memory left outside hugepage pools for Ubuntu and Kubernetes."
+  description = "Proxmox Ubuntu cloud-image template VM ID."
   type        = number
-  default     = 2048
+  default     = 9006
 }
 
-variable "bridge" {
-  type    = string
-  default = "vmbr0"
-}
-
-variable "worker_data_nic_count" {
-  type    = number
-  default = 4
-}
-
-variable "worker_vfio_nic_indexes" {
-  description = "Zero-based indexes within each worker's additional NIC list."
-  type        = set(number)
-  default     = [0, 1]
+variable "control_plane" {
+  description = "Complete control-plane topology and VM configuration. Count must be a positive odd number for quorum."
+  type = object({
+    count       = number
+    name_prefix = string
+    cpu_cores   = number
+    memory_mb   = number
+    disk_gb     = number
+    storage     = string
+    bridge      = string
+  })
 
   validation {
-    condition     = alltrue([for i in var.worker_vfio_nic_indexes : i >= 0 && i < var.worker_data_nic_count])
-    error_message = "Every VFIO NIC index must identify an additional worker NIC."
-  }
-}
-
-variable "worker_node_labels" {
-  description = "Kubernetes labels applied to every worker, expressed as key=value strings. An empty list manages no worker labels."
-  type        = list(string)
-  default     = []
-
-  validation {
-    condition = alltrue([
-      for label in var.worker_node_labels :
-      can(regex("^[^=[:space:]]+=[^=[:space:]]+$", label))
-    ])
-    error_message = "Each worker_node_labels entry must be a non-empty key=value string containing exactly one equals sign."
+    condition = (
+      var.control_plane.count >= 1 &&
+      var.control_plane.count % 2 == 1 &&
+      var.control_plane.cpu_cores > 0 &&
+      var.control_plane.memory_mb > 0 &&
+      var.control_plane.disk_gb > 0 &&
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.control_plane.name_prefix))
+    )
+    error_message = "control_plane.count must be a positive odd number (1, 3, 5, ...), with positive resources and a DNS-safe name_prefix."
   }
 }
 
 variable "worker_pools" {
-  description = "Named, independently scalable worker pools. When empty, legacy worker_* inputs create the default pool."
+  description = "Named, independently scalable worker pools. Every pool declares its complete VM, networking, VFIO, hugepage, and label configuration."
   type = map(object({
     count                 = number
-    cpu_cores             = optional(number)
-    memory_mb             = optional(number)
-    disk_gb               = optional(number)
-    storage               = optional(string)
-    bridge                = optional(string)
-    data_nic_count        = optional(number)
-    vfio_nic_indexes      = optional(set(number))
-    hugepages_1g          = optional(number)
-    hugepages_2m          = optional(number)
-    os_reserved_memory_mb = optional(number)
-    node_labels           = optional(list(string))
+    name_prefix           = string
+    cpu_cores             = number
+    memory_mb             = number
+    disk_gb               = number
+    storage               = string
+    bridge                = string
+    data_nic_count        = number
+    vfio_nic_indexes      = set(number)
+    hugepages_1g          = number
+    hugepages_2m          = number
+    os_reserved_memory_mb = number
+    node_labels           = map(string)
   }))
   default = {}
 
@@ -121,136 +58,68 @@ variable "worker_pools" {
     condition = alltrue([
       for name, pool in var.worker_pools :
       can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", name)) &&
-      length(name) <= 40 && pool.count >= 0 &&
-      (pool.cpu_cores == null || pool.cpu_cores > 0) &&
-      (pool.memory_mb == null || pool.memory_mb > 0) &&
-      (pool.disk_gb == null || pool.disk_gb > 0) &&
-      (pool.data_nic_count == null || pool.data_nic_count >= 0) &&
-      (pool.hugepages_1g == null || pool.hugepages_1g >= 0) &&
-      (pool.hugepages_2m == null || pool.hugepages_2m >= 0) &&
-      alltrue([
-        for index in coalesce(pool.vfio_nic_indexes, []) :
-        index >= 0 && index < coalesce(pool.data_nic_count, var.worker_data_nic_count)
-      ]) &&
-      alltrue([
-        for label in coalesce(pool.node_labels, []) :
-        can(regex("^[^=[:space:]]+=[^=[:space:]]+$", label))
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", pool.name_prefix)) &&
+      pool.count >= 0 && pool.cpu_cores > 0 && pool.memory_mb > 0 && pool.disk_gb > 0 &&
+      pool.data_nic_count >= 0 && pool.hugepages_1g >= 0 && pool.hugepages_2m >= 0 &&
+      pool.os_reserved_memory_mb >= 0 && pool.os_reserved_memory_mb <= pool.memory_mb &&
+      pool.hugepages_1g * 1024 + pool.hugepages_2m * 2 <= pool.memory_mb - pool.os_reserved_memory_mb &&
+      alltrue([for index in pool.vfio_nic_indexes : index >= 0 && index < pool.data_nic_count]) &&
+      alltrue([for key, value in pool.node_labels :
+        can(regex("^[A-Za-z0-9]([A-Za-z0-9._/-]*[A-Za-z0-9])?$", key)) &&
+        !strcontains(key, "=") && !strcontains(value, "=")
       ])
     ])
-    error_message = "Worker pool names/settings, VFIO indexes, and key=value node labels must be valid."
+    error_message = "Each worker pool must have valid names/resources; VFIO indexes must address data NICs; hugepages must fit after reserved memory; labels must be valid key/value entries."
   }
 }
 
-variable "hugepages_1g" {
-  description = "Number of 1 GiB pages reserved at worker boot."
-  type        = number
-  default     = 2
-}
-
-variable "hugepages_2m" {
-  description = "Number of 2 MiB pages allocated after the boot-time 1 GiB reservation."
-  type        = number
-  default     = 1024
-}
-
-variable "enable_hostpath_storage" {
-  type    = bool
-  default = true
-}
-
-variable "enable_multus" {
-  type    = bool
-  default = true
-}
-
-variable "multus_version" {
-  description = "Pinned upstream Multus CNI release used for the thick-plugin deployment."
-  type        = string
-  default     = "v4.3.0"
-}
-
-variable "multus_memory_request" {
-  description = "Memory request for each upstream Multus daemon."
-  type        = string
-  default     = "256Mi"
-}
-
-variable "multus_memory_limit" {
-  description = "Memory limit for each upstream Multus daemon."
-  type        = string
-  default     = "512Mi"
-}
-
-variable "microk8s_channel" {
-  type    = string
-  default = "1.35/stable"
-}
-
-variable "k9s_version" {
-  description = "Pinned upstream k9s release installed on control-plane nodes."
-  type        = string
-  default     = "v0.50.18"
+variable "kubernetes" {
+  description = "Pinned Kubernetes and control-plane client tool versions."
+  type = object({
+    microk8s_channel = string
+    kubectl_version  = string
+    helm_version     = string
+    k9s_version      = string
+  })
 
   validation {
-    condition     = can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+$", var.k9s_version))
-    error_message = "k9s_version must be a release tag such as v0.50.18."
+    condition = (
+      can(regex("^[0-9]+\\.[0-9]+/(stable|candidate|beta|edge)$", var.kubernetes.microk8s_channel)) &&
+      can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.kubernetes.kubectl_version)) &&
+      can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.kubernetes.helm_version)) &&
+      can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+$", var.kubernetes.k9s_version))
+    )
+    error_message = "kubernetes versions must use a MicroK8s channel and exact kubectl, Helm, and k9s semantic versions."
   }
 }
 
-variable "kubectl_version" {
-  description = "Exact upstream kubectl semantic version installed and held on control-plane nodes."
-  type        = string
-  default     = "1.35.7"
-
-  validation {
-    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.kubectl_version))
-    error_message = "kubectl_version must be an exact semantic version such as 1.35.7."
-  }
+variable "addons" {
+  description = "Cluster-wide add-ons installed once from the primary control plane."
+  type = object({
+    hostpath_storage = bool
+    multus = object({
+      enabled        = bool
+      version        = string
+      memory_request = string
+      memory_limit   = string
+    })
+  })
 }
 
-variable "helm_version" {
-  description = "Exact upstream Helm semantic version installed and held on control-plane nodes."
-  type        = string
-  default     = "3.21.3"
-
-  validation {
-    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.helm_version))
-    error_message = "helm_version must be an exact semantic version such as 3.21.3."
-  }
-}
-
-variable "automation_enabled" {
-  description = "Run guest configuration, joins, reboots, addons, tools, and health gates from OpenTofu."
-  type        = bool
-  default     = true
-}
-
-variable "guest_ssh_user" {
-  description = "Cloud-image user used for guest automation."
-  type        = string
-  default     = "ubuntu"
+variable "automation" {
+  description = "Guest and cluster automation behavior."
+  type = object({
+    enabled     = bool
+    ssh_user    = string
+    ssh_port    = number
+    revision    = string
+    reboot_wait = string
+  })
 }
 
 variable "guest_ssh_private_key_path" {
-  description = "Absolute path on the OpenTofu runner to the guest SSH private key. Required when automation is enabled."
+  description = "Absolute path on the OpenTofu runner to the guest SSH private key."
   type        = string
   default     = null
   nullable    = true
-}
-
-variable "guest_ssh_port" {
-  type    = number
-  default = 22
-}
-
-variable "automation_revision" {
-  description = "Bump to intentionally rerun idempotent guest automation after implementation changes."
-  type        = string
-  default     = "1"
-}
-
-variable "worker_reboot_wait" {
-  description = "Wait after conditionally scheduling worker reboots."
-  type        = string
-  default     = "75s"
 }

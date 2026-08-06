@@ -1,0 +1,9 @@
+variable "node_name" { type = string }
+variable "template_vm_id" { type = number }
+variable "count_nodes" { type = number }
+variable "name_prefix" { type = string }
+variable "cpu_cores" { type = number }
+variable "memory_mb" { type = number }
+variable "disk_gb" { type = number }
+variable "storage" { type = string }
+variable "bridge" { type = string }
