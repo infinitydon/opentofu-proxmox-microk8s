@@ -85,6 +85,20 @@ variable "worker_vfio_nic_indexes" {
   }
 }
 
+variable "worker_node_labels" {
+  description = "Kubernetes labels applied to every worker, expressed as key=value strings. An empty list manages no worker labels."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for label in var.worker_node_labels :
+      can(regex("^[^=[:space:]]+=[^=[:space:]]+$", label))
+    ])
+    error_message = "Each worker_node_labels entry must be a non-empty key=value string containing exactly one equals sign."
+  }
+}
+
 variable "hugepages_1g" {
   description = "Number of 1 GiB pages reserved at worker boot."
   type        = number

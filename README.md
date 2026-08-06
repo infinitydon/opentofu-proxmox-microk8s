@@ -36,6 +36,10 @@ module "microk8s" {
 
   worker_data_nic_count   = 4
   worker_vfio_nic_indexes = [0, 1]
+  worker_node_labels = [
+    "osvbng.infinitydon.com/bng-frr-ha=true",
+    "dpdk_enabled=true",
+  ]
 
   hugepages_1g = 2
   hugepages_2m = 1024
@@ -62,6 +66,15 @@ nodes. Multus uses the pinned upstream thick-plugin image rather than the MicroK
 community addon. Its daemon defaults to a 256 MiB request and 512 MiB limit, replacing
 the upstream quickstart manifest's 50 MiB values. When both hugepage sizes are enabled, 1 GiB pages are reserved at kernel
 boot and 2 MiB pages are allocated afterward by sysctl.
+
+`worker_node_labels` applies the same list of Kubernetes `key=value` labels to
+every worker. Its default is `[]`, which adds no labels. Labels previously managed
+by the module are reconciled, so removing an entry removes that label without
+touching labels managed elsewhere.
+
+Verbose installer output is retained on each node under
+`/tmp/opentofu-*.log`. Normal applies show concise phase completion and health-gate
+results; if a phase fails, its last 80 log lines are printed automatically.
 
 ## Automated success criteria
 

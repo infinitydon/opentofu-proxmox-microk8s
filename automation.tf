@@ -80,7 +80,8 @@ resource "terraform_data" "control_plane_install" {
     inline = [
       "cloud-init status --wait",
       "sed -i 's/\\r$//' /tmp/install-microk8s.sh",
-      "sudo bash /tmp/install-microk8s.sh '${var.microk8s_channel}'",
+      "sudo bash /tmp/install-microk8s.sh '${var.microk8s_channel}' >/tmp/opentofu-install-microk8s.log 2>&1 || { rc=$?; echo 'MicroK8s installation failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-install-microk8s.log >&2; exit $rc; }",
+      "echo 'MicroK8s installation completed on ${each.key}'",
       "if ! sudo test -e /var/lib/opentofu-control-plane-ip; then printf '%s\\n' '${local.control_plane_ipv4[each.key]}' | sudo tee /var/lib/opentofu-control-plane-ip >/dev/null; fi",
     ]
   }
@@ -125,7 +126,8 @@ resource "terraform_data" "worker_install" {
     inline = [
       "cloud-init status --wait",
       "sed -i 's/\\r$//' /tmp/install-microk8s.sh",
-      "sudo bash /tmp/install-microk8s.sh '${var.microk8s_channel}'",
+      "sudo bash /tmp/install-microk8s.sh '${var.microk8s_channel}' >/tmp/opentofu-install-microk8s.log 2>&1 || { rc=$?; echo 'MicroK8s installation failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-install-microk8s.log >&2; exit $rc; }",
+      "echo 'MicroK8s installation completed on ${each.key}'",
     ]
   }
 }
@@ -261,7 +263,8 @@ resource "terraform_data" "worker_configuration" {
   provisioner "remote-exec" {
     inline = [
       "sed -i 's/\\r$//' /tmp/configure-worker.sh /tmp/bind-worker-vfio /tmp/worker-vfio-bind.service /tmp/verify-worker-config /tmp/worker-config-verify.service",
-      "sudo bash /tmp/configure-worker.sh '${var.hugepages_1g}' '${var.hugepages_2m}' '${join(",", local.worker_data_macs[each.key])}' '${join(",", [for i, mac in local.worker_data_macs[each.key] : mac if contains(var.worker_vfio_nic_indexes, i)])}' '${local.max_worker_hugepage_mb}'",
+      "sudo bash /tmp/configure-worker.sh '${var.hugepages_1g}' '${var.hugepages_2m}' '${join(",", local.worker_data_macs[each.key])}' '${join(",", [for i, mac in local.worker_data_macs[each.key] : mac if contains(var.worker_vfio_nic_indexes, i)])}' '${local.max_worker_hugepage_mb}' >/tmp/opentofu-configure-worker.log 2>&1 || { rc=$?; echo 'Worker configuration failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-configure-worker.log >&2; exit $rc; }",
+      "echo 'VFIO and hugepage configuration completed on ${each.key}'",
     ]
   }
 }
@@ -446,12 +449,44 @@ resource "terraform_data" "worker_post_join_verify" {
   }
 }
 
+resource "terraform_data" "worker_labels" {
+  for_each = var.automation_enabled ? local.workers : {}
+
+  depends_on = [terraform_data.worker_post_join_verify]
+  triggers_replace = [
+    terraform_data.worker_post_join_verify[each.key].id,
+    sha256(jsonencode(var.worker_node_labels)),
+    filesha256("${path.module}/scripts/configure-worker-labels.sh"),
+  ]
+
+  connection {
+    type        = "ssh"
+    host        = local.primary_control_plane_ipv4
+    port        = var.guest_ssh_port
+    user        = var.guest_ssh_user
+    private_key = file(var.guest_ssh_private_key_path)
+    timeout     = "15m"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/configure-worker-labels.sh"
+    destination = "/tmp/configure-worker-labels.sh"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "sed -i 's/\\r$//' /tmp/configure-worker-labels.sh",
+      "sudo bash /tmp/configure-worker-labels.sh '${each.key}' '${base64encode(jsonencode(var.worker_node_labels))}'",
+    ]
+  }
+}
+
 resource "terraform_data" "addons" {
   count = var.automation_enabled ? 1 : 0
 
   depends_on = [
     terraform_data.control_plane_join,
-    terraform_data.worker_post_join_verify,
+    terraform_data.worker_labels,
   ]
   triggers_replace = [
     var.enable_hostpath_storage,
@@ -480,7 +515,8 @@ resource "terraform_data" "addons" {
   provisioner "remote-exec" {
     inline = [
       "sed -i 's/\\r$//' /tmp/configure-addons.sh",
-      "sudo bash /tmp/configure-addons.sh '${var.enable_hostpath_storage}' '${var.enable_multus}' '${var.multus_version}' '${var.multus_memory_request}' '${var.multus_memory_limit}'",
+      "sudo bash /tmp/configure-addons.sh '${var.enable_hostpath_storage}' '${var.enable_multus}' '${var.multus_version}' '${var.multus_memory_request}' '${var.multus_memory_limit}' >/tmp/opentofu-configure-addons.log 2>&1 || { rc=$?; echo 'Addon configuration failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-configure-addons.log >&2; exit $rc; }",
+      "echo 'Cluster addons configured'",
     ]
   }
 }
@@ -513,7 +549,8 @@ resource "terraform_data" "control_plane_tools" {
   provisioner "remote-exec" {
     inline = [
       "sed -i 's/\\r$//' /tmp/configure-control-plane-tools.sh",
-      "sudo bash /tmp/configure-control-plane-tools.sh 'v${local.microk8s_minor}'",
+      "sudo bash /tmp/configure-control-plane-tools.sh 'v${local.microk8s_minor}' >/tmp/opentofu-control-plane-tools.log 2>&1 || { rc=$?; echo 'Control-plane tool installation failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-control-plane-tools.log >&2; exit $rc; }",
+      "echo 'kubectl and Helm verified on ${each.key}'",
     ]
   }
 }
@@ -533,6 +570,7 @@ resource "terraform_data" "cluster_health" {
     var.multus_version,
     var.multus_memory_request,
     var.multus_memory_limit,
+    sha256(jsonencode(var.worker_node_labels)),
     var.automation_revision,
     filesha256("${path.module}/scripts/verify-cluster.sh"),
   ]
