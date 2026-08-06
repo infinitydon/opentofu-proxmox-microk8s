@@ -471,6 +471,62 @@ resource "terraform_data" "worker_post_join_verify" {
   }
 }
 
+# Scale-down must remove the worker from MicroK8s before its Proxmox VM is
+# destroyed. Without this lifecycle anchor Kubernetes retains a stale Node
+# object and the final cluster-health check correctly reports too many nodes.
+resource "terraform_data" "worker_scale_down" {
+  for_each = local.automation_enabled ? local.workers : {}
+
+  depends_on = [terraform_data.worker_post_join_verify]
+
+  input = {
+    node_name                  = each.key
+    worker_vm_id               = each.value.id
+    worker_ipv4                = local.worker_ipv4[each.key]
+    primary_control_plane_ipv4 = local.primary_control_plane_ipv4
+    ssh_user                   = local.guest_ssh_user
+    ssh_port                   = local.guest_ssh_port
+    ssh_private_key_path       = var.guest_ssh_private_key_path
+  }
+
+  provisioner "remote-exec" {
+    when       = destroy
+    on_failure = continue
+
+    connection {
+      type        = "ssh"
+      host        = self.input.worker_ipv4
+      port        = self.input.ssh_port
+      user        = self.input.ssh_user
+      private_key = file(self.input.ssh_private_key_path)
+      timeout     = "5m"
+    }
+
+    inline = [
+      "sudo microk8s leave >/tmp/opentofu-microk8s-leave.log 2>&1 || sudo microk8s stop >/tmp/opentofu-microk8s-stop.log 2>&1 || true",
+      "echo 'MicroK8s worker ${self.input.node_name} quiesced for scale-down'",
+    ]
+  }
+
+  provisioner "remote-exec" {
+    when = destroy
+
+    connection {
+      type        = "ssh"
+      host        = self.input.primary_control_plane_ipv4
+      port        = self.input.ssh_port
+      user        = self.input.ssh_user
+      private_key = file(self.input.ssh_private_key_path)
+      timeout     = "5m"
+    }
+
+    inline = [
+      "sudo microk8s kubectl delete node '${self.input.node_name}' --ignore-not-found=true --wait=false",
+      "echo 'Kubernetes node ${self.input.node_name} removed for scale-down'",
+    ]
+  }
+}
+
 resource "terraform_data" "worker_labels" {
   for_each = local.automation_enabled ? local.workers : {}
 
@@ -614,6 +670,7 @@ resource "terraform_data" "cluster_health" {
   depends_on = [
     terraform_data.control_plane_tools,
     terraform_data.worker_post_join_verify,
+    terraform_data.worker_scale_down,
   ]
   triggers_replace = {
     expected_nodes_csv    = join(",", local.expected_node_names)
@@ -665,5 +722,3 @@ resource "terraform_data" "cluster_health" {
     ]
   }
 }
-
-
