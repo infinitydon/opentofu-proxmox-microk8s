@@ -56,7 +56,7 @@ resource "terraform_data" "control_plane_install" {
 
   triggers_replace = [
     proxmox_virtual_environment_vm.control_plane[each.key].id,
-    each.value.disk_gb,
+    var.control_plane_disk_gb,
     var.microk8s_channel,
     var.automation_revision,
     filesha256("${path.module}/scripts/install-microk8s.sh"),
