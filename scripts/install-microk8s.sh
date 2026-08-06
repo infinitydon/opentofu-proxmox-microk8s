@@ -11,7 +11,7 @@ fi
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y cloud-guest-utils jq openssh-server pciutils qemu-guest-agent snapd
 systemctl enable --now qemu-guest-agent
-systemctl enable --now ssh
+systemctl enable --now ssh.service ssh.socket
 systemctl enable --now snapd.socket
 systemctl start snapd.service
 for _ in {1..30}; do

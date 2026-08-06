@@ -159,7 +159,7 @@ resource "terraform_data" "control_plane_reboot" {
 
   provisioner "remote-exec" {
     inline = [
-      "if sudo test -f /var/run/reboot-required; then sudo systemd-run --unit=opentofu-control-plane-reboot --on-active=5s /usr/bin/systemctl reboot; else echo 'Control-plane reboot not required'; fi",
+      "sudo systemctl enable ssh.service ssh.socket >/dev/null; if sudo test -f /var/run/reboot-required; then sudo systemd-run --unit=opentofu-control-plane-reboot --on-active=5s /usr/bin/systemctl reboot; else sudo systemctl start ssh.socket; echo 'Control-plane reboot not required'; fi",
     ]
   }
 }
@@ -308,7 +308,7 @@ resource "terraform_data" "worker_reboot" {
 
   provisioner "remote-exec" {
     inline = [
-      "if sudo test -f /var/lib/opentofu-worker-reboot-required; then sudo rm -f /var/lib/opentofu-worker-reboot-required; sudo systemd-run --unit=opentofu-worker-reboot --on-active=5s /usr/bin/systemctl reboot; else echo 'Worker reboot not required'; fi",
+      "sudo systemctl enable ssh.service ssh.socket >/dev/null; if sudo test -f /var/lib/opentofu-worker-reboot-required; then sudo rm -f /var/lib/opentofu-worker-reboot-required; sudo systemd-run --unit=opentofu-worker-reboot --on-active=5s /usr/bin/systemctl reboot; else sudo systemctl start ssh.socket; echo 'Worker reboot not required'; fi",
     ]
   }
 }
@@ -665,6 +665,5 @@ resource "terraform_data" "cluster_health" {
     ]
   }
 }
-
 
 
