@@ -16,6 +16,11 @@ variable "storage" {
 variable "control_plane_count" {
   type    = number
   default = 1
+
+  validation {
+    condition     = var.control_plane_count >= 1
+    error_message = "At least one control-plane node is required."
+  }
 }
 
 variable "worker_count" {
@@ -51,6 +56,12 @@ variable "worker_memory_mb" {
 variable "worker_disk_gb" {
   type    = number
   default = 50
+}
+
+variable "worker_os_reserved_memory_mb" {
+  description = "Worker memory left outside hugepage pools for Ubuntu and Kubernetes."
+  type        = number
+  default     = 2048
 }
 
 variable "bridge" {
@@ -117,4 +128,40 @@ variable "multus_memory_limit" {
 variable "microk8s_channel" {
   type    = string
   default = "1.35/stable"
+}
+
+variable "automation_enabled" {
+  description = "Run guest configuration, joins, reboots, addons, tools, and health gates from OpenTofu."
+  type        = bool
+  default     = true
+}
+
+variable "guest_ssh_user" {
+  description = "Cloud-image user used for guest automation."
+  type        = string
+  default     = "ubuntu"
+}
+
+variable "guest_ssh_private_key_path" {
+  description = "Absolute path on the OpenTofu runner to the guest SSH private key. Required when automation is enabled."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "guest_ssh_port" {
+  type    = number
+  default = 22
+}
+
+variable "automation_revision" {
+  description = "Bump to intentionally rerun idempotent guest automation after implementation changes."
+  type        = string
+  default     = "1"
+}
+
+variable "worker_reboot_wait" {
+  description = "Wait after conditionally scheduling worker reboots."
+  type        = string
+  default     = "75s"
 }

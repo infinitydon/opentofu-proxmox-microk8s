@@ -5,6 +5,7 @@ pages_1g="${1:?1 GiB page count required}"
 pages_2m="${2:?2 MiB page count required}"
 all_data_macs_csv="${3:?all data NIC MACs required}"
 vfio_macs_csv="${4:?VFIO NIC MACs required}"
+max_hugepage_mb="${5:-6144}"
 
 if [[ ${EUID} -ne 0 ]]; then
   echo "Run as root." >&2
@@ -21,9 +22,15 @@ fi
 ln -sfn "$devbind_source" /usr/local/sbin/dpdk-devbind.py
 /usr/local/sbin/dpdk-devbind.py --status >/dev/null
 
-if (( pages_1g * 1024 + pages_2m * 2 > 6144 )); then
-  echo "Hugepages may not exceed 6 GiB on an 8 GiB worker." >&2
+if (( pages_1g * 1024 + pages_2m * 2 > max_hugepage_mb )); then
+  echo "Hugepages may not exceed ${max_hugepage_mb} MiB on this worker." >&2
   exit 1
+fi
+
+current_1g="$(< /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages)"
+reboot_required=false
+if [[ "$current_1g" -ne "$pages_1g" ]]; then
+  reboot_required=true
 fi
 
 if (( pages_1g > 0 )) && ! grep -qw pdpe1gb /proc/cpuinfo; then
@@ -92,6 +99,7 @@ update-grub
 
 printf '# Allocate 2 MiB pages after boot-time 1 GiB pages.\nvm.nr_hugepages=%d\n' \
   "$pages_2m" > /etc/sysctl.d/60-worker-2m-hugepages.conf
+sysctl -p /etc/sysctl.d/60-worker-2m-hugepages.conf
 
 install -m 0755 /tmp/verify-worker-config /usr/local/sbin/verify-worker-config
 install -m 0644 /tmp/worker-config-verify.service /etc/systemd/system/worker-config-verify.service
@@ -99,4 +107,12 @@ printf 'PAGES_1G=%d\nPAGES_2M=%d\n' "$pages_1g" "$pages_2m" > /etc/worker-hugepa
 systemctl daemon-reload
 systemctl enable worker-config-verify.service
 
-echo "Worker configuration staged; reboot required."
+if [[ "$reboot_required" == true ]]; then
+  touch /var/lib/opentofu-worker-reboot-required
+  echo "Worker configuration staged; reboot required."
+else
+  rm -f /var/lib/opentofu-worker-reboot-required
+  systemctl restart worker-vfio-bind.service
+  systemctl restart worker-config-verify.service
+  echo "Worker configuration applied without a reboot."
+fi

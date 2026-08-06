@@ -39,3 +39,9 @@ output "cluster_options" {
     multus_memory_limit     = var.multus_memory_limit
   }
 }
+
+output "cluster_ready" {
+  description = "True only after enabled OpenTofu guest automation and health gates complete."
+  value       = var.automation_enabled ? true : null
+  depends_on  = [terraform_data.cluster_health]
+}
