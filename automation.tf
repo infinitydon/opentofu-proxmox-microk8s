@@ -343,11 +343,9 @@ resource "terraform_data" "worker_post_join_verify" {
   provisioner "remote-exec" {
     inline = [
       "sudo microk8s status --wait-ready --timeout 600",
-      "sudo microk8s kubectl get node '${each.key}'",
-      "sudo microk8s kubectl get node '${local.primary_control_plane_name}'",
-      "test ! -e /var/snap/microk8s/current/args/kube-apiserver",
-      "test ! -e /var/snap/microk8s/current/args/kube-controller-manager",
-      "test ! -e /var/snap/microk8s/current/args/kube-scheduler",
+      "sudo microk8s status | grep -F 'acting as a node in a cluster'",
+      "pgrep -a kubelite | grep -F -- '--start-control-plane=false'",
+      "sudo snap services microk8s.daemon-apiserver-proxy | grep -Eq 'enabled[[:space:]]+active'",
     ]
   }
 }
