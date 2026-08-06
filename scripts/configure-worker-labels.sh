@@ -23,6 +23,23 @@ fi
 mapfile -t labels < <(jq -r '.[]' <<< "$labels_json")
 declare -A wanted_keys=()
 
+# A successful `microk8s join` returns before the Node object is guaranteed to
+# be visible through the API server. Do not race label reconciliation against
+# kubelet registration.
+node_ready=false
+for _ in {1..120}; do
+  if [[ "$(microk8s kubectl get node "$node_name" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)" == "True" ]]; then
+    node_ready=true
+    break
+  fi
+  sleep 5
+done
+if [[ "$node_ready" != true ]]; then
+  echo "Worker ${node_name} did not register as Ready within 10 minutes." >&2
+  microk8s kubectl get nodes -o wide >&2 || true
+  exit 1
+fi
+
 for label in "${labels[@]}"; do
   key="${label%%=*}"
   wanted_keys["$key"]=1
