@@ -365,8 +365,12 @@ resource "terraform_data" "worker_token" {
 resource "terraform_data" "worker_join" {
   for_each = var.automation_enabled ? local.workers : {}
 
-  depends_on       = [terraform_data.worker_token]
-  triggers_replace = [terraform_data.worker_token[each.key].id]
+  depends_on = [terraform_data.worker_token]
+  triggers_replace = [
+    terraform_data.worker_token[each.key].id,
+    local.primary_control_plane_ipv4,
+    var.automation_revision,
+  ]
 
   connection {
     type        = "ssh"
@@ -380,6 +384,9 @@ resource "terraform_data" "worker_join" {
   provisioner "remote-exec" {
     inline = [
       "if ! sudo microk8s kubectl get node '${local.primary_control_plane_name}' >/dev/null 2>&1; then sudo microk8s join '${local.primary_control_plane_ipv4}:25000/${random_password.worker_join_token[each.key].result}' --worker; else echo 'Worker already joined'; fi",
+      "sudo sed -Ei 's#address: [0-9.]+:16443#address: ${local.primary_control_plane_ipv4}:16443#g' /var/snap/microk8s/current/args/traefik/provider.yaml",
+      "sudo systemctl restart snap.microk8s.daemon-apiserver-proxy.service",
+      "for attempt in $(seq 1 60); do if sudo journalctl -u snap.microk8s.daemon-apiserver-proxy.service --since '-2 minutes' --no-pager | grep -Fq 'ready to proxy client requests to [${local.primary_control_plane_ipv4}:16443]'; then break; fi; if [ \"$attempt\" -eq 60 ]; then sudo journalctl -u snap.microk8s.daemon-apiserver-proxy.service -n 50 --no-pager; exit 1; fi; sleep 2; done",
     ]
   }
 }

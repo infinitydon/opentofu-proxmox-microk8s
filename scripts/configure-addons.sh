@@ -33,6 +33,10 @@ if [[ "$enable_multus" == true ]]; then
   microk8s kubectl apply -f "$manifest"
   microk8s kubectl patch daemonset kube-multus-ds -n kube-system --type=strategic \
     -p "{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"kube-multus\",\"resources\":{\"requests\":{\"cpu\":\"100m\",\"memory\":\"${multus_memory_request}\"},\"limits\":{\"cpu\":\"100m\",\"memory\":\"${multus_memory_limit}\"}}}]}}}}"
+  # Remove pods from the previous template immediately. This also recovers upgrades
+  # where an old thick-plugin pod cannot cleanly terminate after its CNI path moves.
+  microk8s kubectl delete pods -n kube-system -l app=multus \
+    --force --grace-period=0 --ignore-not-found --wait=false
   microk8s kubectl rollout status daemonset/kube-multus-ds -n kube-system --timeout=300s
 else
   microk8s kubectl delete daemonset kube-multus-ds -n kube-system --ignore-not-found
