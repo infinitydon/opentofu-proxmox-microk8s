@@ -11,7 +11,15 @@ if [[ ${EUID} -ne 0 ]]; then
   exit 1
 fi
 
-labels_json="$(printf '%s' "$labels_json_b64" | base64 --decode)"
+labels_json="$(printf '%s' "$labels_json_b64" | base64 --decode)" || {
+  echo "Worker labels payload is not valid base64." >&2
+  exit 1
+}
+if ! jq -e 'type == "array" and all(.[]; type == "string")' \
+  <<< "$labels_json" >/dev/null; then
+  echo "Worker labels payload is not a valid JSON string array." >&2
+  exit 1
+fi
 mapfile -t labels < <(jq -r '.[]' <<< "$labels_json")
 declare -A wanted_keys=()
 
