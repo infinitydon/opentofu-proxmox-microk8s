@@ -16,7 +16,7 @@ credentials, and the remote-state backend belong in the calling root module.
 
 ```hcl
 module "microk8s" {
-  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v3.3.1"
+  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v3.4.0"
 
   node_name      = "pve"
   template_vm_id = 9006
@@ -50,6 +50,7 @@ module "microk8s" {
   multus_memory_request   = "256Mi"
   multus_memory_limit     = "512Mi"
   microk8s_channel        = "1.35/stable"
+  k9s_version             = "v0.50.18"
 
   automation_enabled           = true
   guest_ssh_user                = "ubuntu"
@@ -66,6 +67,10 @@ nodes. Multus uses the pinned upstream thick-plugin image rather than the MicroK
 community addon. Its daemon defaults to a 256 MiB request and 512 MiB limit, replacing
 the upstream quickstart manifest's 50 MiB values. When both hugepage sizes are enabled, 1 GiB pages are reserved at kernel
 boot and 2 MiB pages are allocated afterward by sysctl.
+
+Every control-plane node receives upstream kubectl, system-wide kubectl Bash
+completion, Helm, and the checksum-verified pinned `k9s_version` release. These
+tools are configured for and verified as the normal Ubuntu user.
 
 `worker_node_labels` applies the same list of Kubernetes `key=value` labels to
 every worker. Its default is `[]`, which adds no labels. Labels previously managed

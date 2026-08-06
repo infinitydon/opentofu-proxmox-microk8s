@@ -144,6 +144,17 @@ variable "microk8s_channel" {
   default = "1.35/stable"
 }
 
+variable "k9s_version" {
+  description = "Pinned upstream k9s release installed on control-plane nodes."
+  type        = string
+  default     = "v0.50.18"
+
+  validation {
+    condition     = can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+$", var.k9s_version))
+    error_message = "k9s_version must be a release tag such as v0.50.18."
+  }
+}
+
 variable "automation_enabled" {
   description = "Run guest configuration, joins, reboots, addons, tools, and health gates from OpenTofu."
   type        = bool

@@ -540,6 +540,7 @@ resource "terraform_data" "control_plane_tools" {
   triggers_replace = [
     proxmox_virtual_environment_vm.control_plane[each.key].id,
     var.microk8s_channel,
+    var.k9s_version,
     var.automation_revision,
     filesha256("${path.module}/scripts/configure-control-plane-tools.sh"),
   ]
@@ -561,8 +562,8 @@ resource "terraform_data" "control_plane_tools" {
   provisioner "remote-exec" {
     inline = [
       "sed -i 's/\\r$//' /tmp/configure-control-plane-tools.sh",
-      "sudo bash /tmp/configure-control-plane-tools.sh 'v${local.microk8s_minor}' >/tmp/opentofu-control-plane-tools.log 2>&1 || { rc=$?; echo 'Control-plane tool installation failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-control-plane-tools.log >&2; exit $rc; }",
-      "echo 'kubectl and Helm verified on ${each.key}'",
+      "sudo bash /tmp/configure-control-plane-tools.sh 'v${local.microk8s_minor}' '${var.k9s_version}' >/tmp/opentofu-control-plane-tools.log 2>&1 || { rc=$?; echo 'Control-plane tool installation failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-control-plane-tools.log >&2; exit $rc; }",
+      "echo 'kubectl, Bash completion, Helm, and k9s verified on ${each.key}'",
     ]
   }
 }
@@ -582,6 +583,7 @@ resource "terraform_data" "cluster_health" {
     var.multus_version,
     var.multus_memory_request,
     var.multus_memory_limit,
+    var.k9s_version,
     var.automation_revision,
     filesha256("${path.module}/scripts/verify-cluster.sh"),
   ]
@@ -594,6 +596,7 @@ resource "terraform_data" "cluster_health" {
     verify_ready    = true
     verify_kubectl  = true
     verify_helm     = true
+    verify_k9s      = true
     verify_hostpath = var.enable_hostpath_storage
     verify_multus   = var.enable_multus
   }
@@ -615,7 +618,7 @@ resource "terraform_data" "cluster_health" {
   provisioner "remote-exec" {
     inline = [
       "sed -i 's/\\r$//' /tmp/verify-cluster.sh",
-      "sudo bash /tmp/verify-cluster.sh '${length(local.expected_node_names)}' '${join(",", local.expected_node_names)}' '${local.microk8s_minor}' '${var.enable_hostpath_storage}' '${var.enable_multus}' '${var.multus_version}' '${var.multus_memory_request}' '${var.multus_memory_limit}' '${local.primary_control_plane_ipv4}'",
+      "sudo bash /tmp/verify-cluster.sh '${length(local.expected_node_names)}' '${join(",", local.expected_node_names)}' '${local.microk8s_minor}' '${var.enable_hostpath_storage}' '${var.enable_multus}' '${var.multus_version}' '${var.multus_memory_request}' '${var.multus_memory_limit}' '${local.primary_control_plane_ipv4}' '${var.k9s_version}'",
     ]
   }
 }

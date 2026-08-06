@@ -10,6 +10,7 @@ multus_version="${6:?Multus version required}"
 multus_memory_request="${7:?Multus memory request required}"
 multus_memory_limit="${8:?Multus memory limit required}"
 control_plane_ipv4="${9:?control-plane IPv4 address required}"
+k9s_version="${10:?k9s version required}"
 
 if [[ ${EUID} -ne 0 ]]; then
   echo "Run as root on the primary control-plane node." >&2
@@ -59,6 +60,8 @@ actual_nodes="$("${kctl[@]}" get nodes --no-headers | wc -l)"
 "${kctl[@]}" version --client >/dev/null
 "${helmctl[@]}" version >/dev/null
 "${helmctl[@]}" list --all-namespaces >/dev/null
+runuser -u ubuntu -- k9s version | grep -F "$k9s_version" >/dev/null
+test -s /etc/bash_completion.d/kubectl
 
 if [[ "$enable_hostpath" == true ]]; then
   "${kctl[@]}" get storageclass microk8s-hostpath >/dev/null

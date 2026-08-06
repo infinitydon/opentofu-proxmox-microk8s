@@ -41,6 +41,7 @@ output "cluster_options" {
     multus_memory_request   = var.multus_memory_request
     multus_memory_limit     = var.multus_memory_limit
     worker_node_labels      = var.worker_node_labels
+    k9s_version             = var.k9s_version
   }
 }
 
