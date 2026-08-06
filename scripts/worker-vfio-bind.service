@@ -1,0 +1,12 @@
+[Unit]
+Description=Bind explicitly selected worker data NICs to vfio-pci
+After=systemd-modules-load.service
+Before=network-pre.target microk8s.daemon-kubelite.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/bind-worker-vfio
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

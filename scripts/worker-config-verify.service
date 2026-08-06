@@ -1,0 +1,12 @@
+[Unit]
+Description=Verify worker VFIO and mixed hugepage configuration
+After=worker-vfio-bind.service systemd-sysctl.service
+Requires=worker-vfio-bind.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/verify-worker-config
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

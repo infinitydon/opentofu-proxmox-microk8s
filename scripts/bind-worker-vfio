@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+modprobe vfio-pci
+
+while read -r bdf _; do
+  [[ -n "$bdf" ]] || continue
+  device="/sys/bus/pci/devices/$bdf"
+  [[ -d "$device" ]] || { echo "Missing PCI device $bdf" >&2; exit 1; }
+  echo vfio-pci > "$device/driver_override"
+  if [[ -L "$device/driver" ]]; then
+    echo "$bdf" > "$device/driver/unbind"
+  fi
+  echo "$bdf" > /sys/bus/pci/drivers_probe
+  [[ "$(basename "$(readlink -f "$device/driver")")" == vfio-pci ]]
+done < /etc/worker-vfio-pci.list
