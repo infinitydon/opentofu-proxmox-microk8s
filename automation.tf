@@ -149,6 +149,9 @@ resource "time_sleep" "control_plane_reboot_wait" {
 
   depends_on      = [terraform_data.control_plane_reboot]
   create_duration = var.worker_reboot_wait
+  triggers = {
+    reboot_id = terraform_data.control_plane_reboot[each.key].id
+  }
 }
 
 resource "terraform_data" "control_plane_verify" {
@@ -257,6 +260,9 @@ resource "time_sleep" "worker_reboot_wait" {
 
   depends_on      = [terraform_data.worker_reboot]
   create_duration = var.worker_reboot_wait
+  triggers = {
+    reboot_id = terraform_data.worker_reboot[each.key].id
+  }
 }
 
 resource "terraform_data" "worker_verify" {
