@@ -9,9 +9,20 @@ if [[ ${EUID} -ne 0 ]]; then
 fi
 
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y cloud-guest-utils jq openssh-server pciutils qemu-guest-agent
+DEBIAN_FRONTEND=noninteractive apt-get install -y cloud-guest-utils jq openssh-server pciutils qemu-guest-agent snapd
 systemctl enable --now qemu-guest-agent
 systemctl enable --now ssh
+systemctl enable --now snapd.socket
+systemctl start snapd.service
+for _ in {1..30}; do
+  [[ -S /run/snapd.socket ]] && snap version >/dev/null 2>&1 && break
+  sleep 2
+done
+if [[ ! -S /run/snapd.socket ]] || ! snap version >/dev/null 2>&1; then
+  echo "snapd did not become ready within 60 seconds." >&2
+  systemctl status snapd.socket snapd.service --no-pager >&2 || true
+  exit 1
+fi
 
 # Kubelet/cAdvisor and CNI agents consume inotify instances. Cloud images can
 # inherit limits low enough for kubelite to fail with inotify_init: EMFILE.
