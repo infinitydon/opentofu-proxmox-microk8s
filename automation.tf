@@ -524,7 +524,7 @@ resource "terraform_data" "cluster_health" {
   provisioner "remote-exec" {
     inline = [
       "sed -i 's/\\r$//' /tmp/verify-cluster.sh",
-      "sudo bash /tmp/verify-cluster.sh '${length(local.expected_node_names)}' '${join(",", local.expected_node_names)}' '${local.microk8s_minor}' '${var.enable_hostpath_storage}' '${var.enable_multus}' '${var.multus_version}' '${var.multus_memory_request}' '${var.multus_memory_limit}'",
+      "sudo bash /tmp/verify-cluster.sh '${length(local.expected_node_names)}' '${join(",", local.expected_node_names)}' '${local.microk8s_minor}' '${var.enable_hostpath_storage}' '${var.enable_multus}' '${var.multus_version}' '${var.multus_memory_request}' '${var.multus_memory_limit}' '${local.primary_control_plane_ipv4}'",
     ]
   }
 }

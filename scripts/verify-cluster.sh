@@ -9,14 +9,21 @@ enable_multus="${5:?Multus option required}"
 multus_version="${6:?Multus version required}"
 multus_memory_request="${7:?Multus memory request required}"
 multus_memory_limit="${8:?Multus memory limit required}"
+control_plane_ipv4="${9:?control-plane IPv4 address required}"
 
 if [[ ${EUID} -ne 0 ]]; then
   echo "Run as root on the primary control-plane node." >&2
   exit 1
 fi
 
-# Refresh the normal user's kubeconfig before testing it. MicroK8s emits the
-# currently advertised API address, so this also repairs a changed DHCP lease.
+# A DHCP lease change requires a new API server certificate SAN. Rotate only
+# server.crt when needed, then refresh the normal user's kubeconfig.
+if ! openssl x509 -in /var/snap/microk8s/current/certs/server.crt \
+  -noout -checkip "$control_plane_ipv4" >/dev/null 2>&1; then
+  microk8s refresh-certs -e server.crt
+  microk8s status --wait-ready
+fi
+
 install -d -m 0700 -o ubuntu -g ubuntu /home/ubuntu/.kube
 microk8s config > /home/ubuntu/.kube/config
 chown ubuntu:ubuntu /home/ubuntu/.kube/config
