@@ -78,6 +78,7 @@ resource "terraform_data" "control_plane_install" {
 
   provisioner "remote-exec" {
     inline = [
+      "cloud-init status --wait",
       "sed -i 's/\\r$//' /tmp/install-microk8s.sh",
       "sudo bash /tmp/install-microk8s.sh '${var.microk8s_channel}'",
       "if ! sudo test -e /var/lib/opentofu-control-plane-ip; then printf '%s\\n' '${local.control_plane_ipv4[each.key]}' | sudo tee /var/lib/opentofu-control-plane-ip >/dev/null; fi",
@@ -122,6 +123,7 @@ resource "terraform_data" "worker_install" {
 
   provisioner "remote-exec" {
     inline = [
+      "cloud-init status --wait",
       "sed -i 's/\\r$//' /tmp/install-microk8s.sh",
       "sudo bash /tmp/install-microk8s.sh '${var.microk8s_channel}'",
     ]
