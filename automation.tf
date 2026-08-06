@@ -29,6 +29,7 @@ locals {
   microk8s_minor             = split("/", var.microk8s_channel)[0]
   expected_node_names        = concat(sort(keys(local.control_planes)), sort(keys(local.workers)))
   max_worker_hugepage_mb     = var.worker_memory_mb - var.worker_os_reserved_memory_mb
+  cloud_init_wait_command    = "rc=0; cloud-init status --wait >/tmp/opentofu-cloud-init.log 2>&1 || rc=$?; if [ \"$rc\" -eq 0 ]; then :; elif [ \"$rc\" -eq 2 ] && cloud-init status 2>/dev/null | grep -q '^status: done$'; then echo 'cloud-init completed with recoverable warnings:'; cloud-init status --long 2>/dev/null | sed -n '/^recoverable_errors:/,$p' | sed '/^recoverable_errors:$/d;/^[[:space:]]*$/d' | head -n 20; else echo 'cloud-init did not complete successfully:' >&2; cloud-init status --long >&2 || true; exit \"$rc\"; fi"
 }
 
 resource "random_password" "control_plane_join_token" {
@@ -78,7 +79,7 @@ resource "terraform_data" "control_plane_install" {
 
   provisioner "remote-exec" {
     inline = [
-      "cloud-init status --wait >/tmp/opentofu-cloud-init.log 2>&1 || { rc=$?; echo 'cloud-init failed; last 80 log lines:' >&2; tail -n 80 /tmp/opentofu-cloud-init.log >&2; exit $rc; }",
+      local.cloud_init_wait_command,
       "echo 'cloud-init completed on ${each.key}'",
       "sed -i 's/\\r$//' /tmp/install-microk8s.sh",
       "sudo bash /tmp/install-microk8s.sh '${var.microk8s_channel}' >/tmp/opentofu-install-microk8s.log 2>&1 || { rc=$?; echo 'MicroK8s installation failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-install-microk8s.log >&2; exit $rc; }",
@@ -125,7 +126,7 @@ resource "terraform_data" "worker_install" {
 
   provisioner "remote-exec" {
     inline = [
-      "cloud-init status --wait >/tmp/opentofu-cloud-init.log 2>&1 || { rc=$?; echo 'cloud-init failed; last 80 log lines:' >&2; tail -n 80 /tmp/opentofu-cloud-init.log >&2; exit $rc; }",
+      local.cloud_init_wait_command,
       "echo 'cloud-init completed on ${each.key}'",
       "sed -i 's/\\r$//' /tmp/install-microk8s.sh",
       "sudo bash /tmp/install-microk8s.sh '${var.microk8s_channel}' >/tmp/opentofu-install-microk8s.log 2>&1 || { rc=$?; echo 'MicroK8s installation failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-install-microk8s.log >&2; exit $rc; }",
@@ -208,7 +209,7 @@ resource "terraform_data" "control_plane_verify" {
 
   provisioner "remote-exec" {
     inline = [
-      "cloud-init status --wait >/tmp/opentofu-cloud-init.log 2>&1 || { rc=$?; echo 'cloud-init failed; last 80 log lines:' >&2; tail -n 80 /tmp/opentofu-cloud-init.log >&2; exit $rc; }",
+      local.cloud_init_wait_command,
       "test ! -f /var/run/reboot-required",
       "sudo microk8s status --wait-ready --timeout 600",
     ]
@@ -320,7 +321,7 @@ resource "terraform_data" "worker_verify" {
 
   provisioner "remote-exec" {
     inline = [
-      "cloud-init status --wait >/tmp/opentofu-cloud-init.log 2>&1 || { rc=$?; echo 'cloud-init failed; last 80 log lines:' >&2; tail -n 80 /tmp/opentofu-cloud-init.log >&2; exit $rc; }",
+      local.cloud_init_wait_command,
       "sudo systemctl restart worker-vfio-bind.service",
       "sudo systemctl restart worker-config-verify.service",
       "sudo systemctl is-active worker-vfio-bind.service worker-config-verify.service",

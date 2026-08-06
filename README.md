@@ -16,7 +16,7 @@ credentials, and the remote-state backend belong in the calling root module.
 
 ```hcl
 module "microk8s" {
-  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v3.3.0"
+  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v3.3.1"
 
   node_name      = "pve"
   template_vm_id = 9006
@@ -83,6 +83,11 @@ Changing only `worker_node_labels` reruns label reconciliation and verification;
 it does not rerun the full cluster health gate. The health gate runs on initial
 creation and when one of its Kubernetes/addon/tool inputs, implementation hash, or
 `automation_revision` changes.
+
+Ubuntu Noble cloud-init may return exit code 2 for a completed run containing
+recoverable warnings. Automation accepts that code only when the final status is
+exactly `done`, prints the concise recoverable-warning section, and continues.
+Fatal, incomplete, or error states still fail the apply.
 
 ## Automated success criteria
 
