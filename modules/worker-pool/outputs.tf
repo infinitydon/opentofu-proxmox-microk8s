@@ -9,7 +9,8 @@ output "nodes" {
         lower(vm.network_device[0].mac_address)
       )]), null)
       data_macs = [
-        for device in slice(vm.network_device, 1, 1 + var.data_nic_count) : device.mac_address
+        for index in range(var.data_nic_count) :
+        join(":", concat(["02"], regexall("..", random_id.data_nic_mac["${name}/${index}"].hex)))
       ]
       pool_name             = var.pool_name
       cpu_cores             = var.cpu_cores

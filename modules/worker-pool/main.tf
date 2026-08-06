@@ -3,6 +3,20 @@ locals {
     for index in range(var.count_nodes) :
     format("%s-%02d", var.name_prefix, index + 1) => index
   }
+
+  data_nics = {
+    for pair in setproduct(keys(local.nodes), range(var.data_nic_count)) :
+    "${pair[0]}/${pair[1]}" => {
+      node_name = pair[0]
+      index     = pair[1]
+    }
+  }
+}
+
+resource "random_id" "data_nic_mac" {
+  for_each = local.data_nics
+
+  byte_length = 5
 }
 
 resource "proxmox_virtual_environment_vm" "this" {
@@ -45,10 +59,12 @@ resource "proxmox_virtual_environment_vm" "this" {
 
   dynamic "network_device" {
     for_each = range(var.data_nic_count)
+    iterator = data_nic
     content {
-      bridge = var.bridge
-      model  = "virtio"
-      queues = var.cpu_cores
+      bridge      = var.bridge
+      model       = "virtio"
+      queues      = var.cpu_cores
+      mac_address = join(":", concat(["02"], regexall("..", random_id.data_nic_mac["${each.key}/${data_nic.value}"].hex)))
     }
   }
 
