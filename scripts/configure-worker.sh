@@ -29,6 +29,9 @@ fi
 
 current_1g="$(< /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages)"
 reboot_required=false
+if [[ -f /var/run/reboot-required ]]; then
+  reboot_required=true
+fi
 if [[ "$current_1g" -ne "$pages_1g" ]]; then
   reboot_required=true
 fi

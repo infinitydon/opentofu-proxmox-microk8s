@@ -52,7 +52,7 @@ module "microk8s" {
   guest_ssh_private_key_path    = "/absolute/path/to/vm_private_key"
   guest_ssh_port                = 22
   automation_revision           = "1"
-  worker_reboot_wait            = "75s"
+  worker_reboot_wait            = "75s" # post-reboot SSH wait for every node
 }
 ```
 

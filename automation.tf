@@ -122,6 +122,59 @@ resource "terraform_data" "worker_install" {
   }
 }
 
+resource "terraform_data" "control_plane_reboot" {
+  for_each = var.automation_enabled ? local.control_planes : {}
+
+  depends_on       = [terraform_data.control_plane_install]
+  triggers_replace = [terraform_data.control_plane_install[each.key].id]
+
+  connection {
+    type        = "ssh"
+    host        = local.control_plane_ipv4[each.key]
+    port        = var.guest_ssh_port
+    user        = var.guest_ssh_user
+    private_key = file(var.guest_ssh_private_key_path)
+    timeout     = "15m"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "if sudo test -f /var/run/reboot-required; then sudo systemd-run --unit=opentofu-control-plane-reboot --on-active=5s /usr/bin/systemctl reboot; else echo 'Control-plane reboot not required'; fi",
+    ]
+  }
+}
+
+resource "time_sleep" "control_plane_reboot_wait" {
+  for_each = var.automation_enabled ? local.control_planes : {}
+
+  depends_on      = [terraform_data.control_plane_reboot]
+  create_duration = var.worker_reboot_wait
+}
+
+resource "terraform_data" "control_plane_verify" {
+  for_each = var.automation_enabled ? local.control_planes : {}
+
+  depends_on       = [time_sleep.control_plane_reboot_wait]
+  triggers_replace = [time_sleep.control_plane_reboot_wait[each.key].id]
+
+  connection {
+    type        = "ssh"
+    host        = local.control_plane_ipv4[each.key]
+    port        = var.guest_ssh_port
+    user        = var.guest_ssh_user
+    private_key = file(var.guest_ssh_private_key_path)
+    timeout     = "15m"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "cloud-init status --wait",
+      "test ! -f /var/run/reboot-required",
+      "sudo microk8s status --wait-ready --timeout 600",
+    ]
+  }
+}
+
 resource "terraform_data" "worker_configuration" {
   for_each = var.automation_enabled ? local.workers : {}
 
@@ -236,7 +289,7 @@ resource "terraform_data" "worker_verify" {
 resource "terraform_data" "control_plane_token" {
   for_each = var.automation_enabled ? local.secondary_control_planes : {}
 
-  depends_on       = [terraform_data.control_plane_install]
+  depends_on       = [terraform_data.control_plane_verify]
   triggers_replace = [random_password.control_plane_join_token[each.key].result, var.automation_revision]
 
   connection {
@@ -281,7 +334,7 @@ resource "terraform_data" "worker_token" {
   for_each = var.automation_enabled ? local.workers : {}
 
   depends_on = [
-    terraform_data.control_plane_install,
+    terraform_data.control_plane_verify,
     terraform_data.control_plane_join,
     terraform_data.worker_verify,
   ]
