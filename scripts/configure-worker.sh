@@ -68,6 +68,14 @@ modprobe vfio-pci
 printf '%s\n' vfio vfio-pci > /etc/modules-load.d/worker-vfio.conf
 
 vfio_bdf_file=/etc/worker-vfio-pci.list
+declare -A previous_vfio_bdfs=()
+if [[ -f "$vfio_bdf_file" ]]; then
+  while read -r saved_bdf _saved_hash _saved_interface saved_mac; do
+    if [[ -n "${saved_bdf:-}" && -n "${saved_mac:-}" ]]; then
+      previous_vfio_bdfs["${saved_mac,,}"]="$saved_bdf"
+    fi
+  done < "$vfio_bdf_file"
+fi
 : > "$vfio_bdf_file"
 for wanted_mac in "${vfio_macs[@]}"; do
   interface=''
@@ -77,13 +85,17 @@ for wanted_mac in "${vfio_macs[@]}"; do
       break
     fi
   done
-  if [[ -z "$interface" || "$interface" == "eth0" ]]; then
+  if [[ -z "$interface" && -n "${previous_vfio_bdfs[${wanted_mac,,}]:-}" ]]; then
+    bdf="${previous_vfio_bdfs[${wanted_mac,,}]}"
+    interface="vfio-bound"
+  elif [[ -z "$interface" || "$interface" == "eth0" ]]; then
     echo "Refusing VFIO mapping for $wanted_mac: interface missing or management eth0." >&2
     exit 1
+  else
+    # A VirtIO net interface resolves to .../<PCI-BDF>/virtioN; its parent is
+    # the PCI function that must be bound to vfio-pci.
+    bdf="$(basename "$(dirname "$(readlink -f "/sys/class/net/$interface/device")")")"
   fi
-  # A VirtIO net interface resolves to .../<PCI-BDF>/virtioN; its parent is
-  # the PCI function that must be bound to vfio-pci.
-  bdf="$(basename "$(dirname "$(readlink -f "/sys/class/net/$interface/device")")")"
   printf '%s # %s %s\n' "$bdf" "$interface" "$wanted_mac" >> "$vfio_bdf_file"
 done
 

@@ -67,18 +67,24 @@ boot and 2 MiB pages are allocated afterward by sysctl.
 
 With `automation_enabled = true` (the default), a successful apply means more than
 VM creation. OpenTofu waits for guest SSH, installs MicroK8s, configures worker
-VFIO/DPDK/hugepages, conditionally reboots workers, joins all nodes, installs addons
+VFIO/DPDK/hugepages, conditionally reboots nodes, joins all nodes, installs addons
 and control-plane tools, and then runs blocking health gates.
 
 The final gate verifies expected node names/count, Ready state, selected Kubernetes
 minor version, hostpath storage when enabled, pinned Multus thick images and memory,
 normal-user kubectl/Helm access, and a temporary Multus secondary-network pod. Each
 worker separately verifies persistent VFIO bindings, exact hugepage counts,
-`dpdk-devbind.py`, and the absence of control-plane services.
+`dpdk-devbind.py`, and that MicroK8s runs with its control plane disabled.
 
 `cluster_ready` is emitted only after those gates pass. Any failed command fails the
 OpenTofu apply. This is deployment-time convergence, not continuous monitoring;
 Prometheus or another monitoring system should handle ongoing health after apply.
+
+Because management addresses use DHCP, configure DHCP reservations for the
+module-generated management MAC addresses when an OS-required reboot must converge
+in one apply. OpenTofu cannot refresh a provider-computed DHCP address in the middle
+of an apply. If a lease changes during reboot, rerun `tofu apply`; QEMU guest-agent
+data is then refreshed and the remaining idempotent gates continue.
 
 The private-key path is evaluated on the machine running OpenTofu. The key contents
 are not a module input, avoiding storage of the private key in OpenTofu state.
