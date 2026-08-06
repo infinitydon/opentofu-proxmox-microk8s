@@ -41,10 +41,10 @@ resource "random_password" "worker_join_token" {
 }
 
 resource "terraform_data" "control_plane_install" {
-  for_each = var.automation_enabled ? proxmox_virtual_environment_vm.control_plane : {}
+  for_each = var.automation_enabled ? local.control_planes : {}
 
   triggers_replace = [
-    each.value.id,
+    proxmox_virtual_environment_vm.control_plane[each.key].id,
     var.microk8s_channel,
     var.automation_revision,
     filesha256("${path.module}/scripts/install-microk8s.sh"),
@@ -80,10 +80,10 @@ resource "terraform_data" "control_plane_install" {
 }
 
 resource "terraform_data" "worker_install" {
-  for_each = var.automation_enabled ? proxmox_virtual_environment_vm.worker : {}
+  for_each = var.automation_enabled ? local.workers : {}
 
   triggers_replace = [
-    each.value.id,
+    proxmox_virtual_environment_vm.worker[each.key].id,
     var.microk8s_channel,
     var.automation_revision,
     filesha256("${path.module}/scripts/install-microk8s.sh"),
@@ -123,11 +123,11 @@ resource "terraform_data" "worker_install" {
 }
 
 resource "terraform_data" "worker_configuration" {
-  for_each = var.automation_enabled ? proxmox_virtual_environment_vm.worker : {}
+  for_each = var.automation_enabled ? local.workers : {}
 
   depends_on = [terraform_data.worker_install]
   triggers_replace = [
-    each.value.id,
+    proxmox_virtual_environment_vm.worker[each.key].id,
     var.hugepages_1g,
     var.hugepages_2m,
     var.worker_os_reserved_memory_mb,
@@ -178,7 +178,7 @@ resource "terraform_data" "worker_configuration" {
 }
 
 resource "terraform_data" "worker_reboot" {
-  for_each = var.automation_enabled ? proxmox_virtual_environment_vm.worker : {}
+  for_each = var.automation_enabled ? local.workers : {}
 
   depends_on       = [terraform_data.worker_configuration]
   triggers_replace = [terraform_data.worker_configuration[each.key].id]
@@ -200,14 +200,14 @@ resource "terraform_data" "worker_reboot" {
 }
 
 resource "time_sleep" "worker_reboot_wait" {
-  for_each = var.automation_enabled ? proxmox_virtual_environment_vm.worker : {}
+  for_each = var.automation_enabled ? local.workers : {}
 
   depends_on      = [terraform_data.worker_reboot]
   create_duration = var.worker_reboot_wait
 }
 
 resource "terraform_data" "worker_verify" {
-  for_each = var.automation_enabled ? proxmox_virtual_environment_vm.worker : {}
+  for_each = var.automation_enabled ? local.workers : {}
 
   depends_on       = [time_sleep.worker_reboot_wait]
   triggers_replace = [time_sleep.worker_reboot_wait[each.key].id]
@@ -392,11 +392,11 @@ resource "terraform_data" "addons" {
 }
 
 resource "terraform_data" "control_plane_tools" {
-  for_each = var.automation_enabled ? proxmox_virtual_environment_vm.control_plane : {}
+  for_each = var.automation_enabled ? local.control_planes : {}
 
   depends_on = [terraform_data.addons]
   triggers_replace = [
-    each.value.id,
+    proxmox_virtual_environment_vm.control_plane[each.key].id,
     var.microk8s_channel,
     var.automation_revision,
     filesha256("${path.module}/scripts/configure-control-plane-tools.sh"),
