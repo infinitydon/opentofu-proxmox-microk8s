@@ -15,6 +15,13 @@ if [[ ${EUID} -ne 0 ]]; then
   exit 1
 fi
 
+# Refresh the normal user's kubeconfig before testing it. MicroK8s emits the
+# currently advertised API address, so this also repairs a changed DHCP lease.
+install -d -m 0700 -o ubuntu -g ubuntu /home/ubuntu/.kube
+microk8s config > /home/ubuntu/.kube/config
+chown ubuntu:ubuntu /home/ubuntu/.kube/config
+chmod 0600 /home/ubuntu/.kube/config
+
 kctl=(runuser -u ubuntu -- kubectl)
 helmctl=(runuser -u ubuntu -- helm)
 
