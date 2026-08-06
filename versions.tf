@@ -7,6 +7,4 @@ terraform {
       version = "~> 0.111"
     }
   }
-
-  backend "pg" {}
 }
