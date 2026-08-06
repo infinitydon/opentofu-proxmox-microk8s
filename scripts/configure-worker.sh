@@ -68,6 +68,8 @@ modprobe vfio-pci
 printf '%s\n' vfio vfio-pci > /etc/modules-load.d/worker-vfio.conf
 
 vfio_bdf_file=/etc/worker-vfio-pci.list
+vfio_bdf_file_new="$(mktemp)"
+trap 'rm -f "$vfio_bdf_file_new"' EXIT
 declare -A previous_vfio_bdfs=()
 if [[ -f "$vfio_bdf_file" ]]; then
   while read -r saved_bdf _saved_hash _saved_interface saved_mac; do
@@ -76,7 +78,11 @@ if [[ -f "$vfio_bdf_file" ]]; then
     fi
   done < "$vfio_bdf_file"
 fi
-: > "$vfio_bdf_file"
+mapfile -t bound_vfio_bdfs < <(
+  find /sys/bus/pci/drivers/vfio-pci -mindepth 1 -maxdepth 1 -type l \
+    -printf '%f\n' 2>/dev/null | grep -E '^[0-9a-fA-F]{4}:' | sort
+)
+vfio_index=0
 for wanted_mac in "${vfio_macs[@]}"; do
   interface=''
   for address_file in /sys/class/net/*/address; do
@@ -88,6 +94,9 @@ for wanted_mac in "${vfio_macs[@]}"; do
   if [[ -z "$interface" && -n "${previous_vfio_bdfs[${wanted_mac,,}]:-}" ]]; then
     bdf="${previous_vfio_bdfs[${wanted_mac,,}]}"
     interface="vfio-bound"
+  elif [[ -z "$interface" && ${#bound_vfio_bdfs[@]} -eq ${#vfio_macs[@]} ]]; then
+    bdf="${bound_vfio_bdfs[$vfio_index]}"
+    interface="vfio-bound"
   elif [[ -z "$interface" || "$interface" == "eth0" ]]; then
     echo "Refusing VFIO mapping for $wanted_mac: interface missing or management eth0." >&2
     exit 1
@@ -96,8 +105,10 @@ for wanted_mac in "${vfio_macs[@]}"; do
     # the PCI function that must be bound to vfio-pci.
     bdf="$(basename "$(dirname "$(readlink -f "/sys/class/net/$interface/device")")")"
   fi
-  printf '%s # %s %s\n' "$bdf" "$interface" "$wanted_mac" >> "$vfio_bdf_file"
+  printf '%s # %s %s\n' "$bdf" "$interface" "$wanted_mac" >> "$vfio_bdf_file_new"
+  ((vfio_index += 1))
 done
+install -m 0644 "$vfio_bdf_file_new" "$vfio_bdf_file"
 
 install -m 0755 /tmp/bind-worker-vfio /usr/local/sbin/bind-worker-vfio
 install -m 0644 /tmp/worker-vfio-bind.service /etc/systemd/system/worker-vfio-bind.service
