@@ -22,14 +22,19 @@ locals {
   }
   worker_data_macs = {
     for name, vm in proxmox_virtual_environment_vm.worker : name => [
-      for device in slice(vm.network_device, 1, 1 + var.worker_data_nic_count) : device.mac_address
+      for device in slice(vm.network_device, 1, 1 + local.workers[name].data_nic_count) : device.mac_address
     ]
+  }
+  worker_node_labels = {
+    for name, worker in local.workers : name => worker.node_labels
   }
   primary_control_plane_ipv4 = local.control_plane_ipv4[local.primary_control_plane_name]
   microk8s_minor             = split("/", var.microk8s_channel)[0]
   expected_node_names        = concat(sort(keys(local.control_planes)), sort(keys(local.workers)))
-  max_worker_hugepage_mb     = var.worker_memory_mb - var.worker_os_reserved_memory_mb
-  cloud_init_wait_command    = "rc=0; cloud-init status --wait >/tmp/opentofu-cloud-init.log 2>&1 || rc=$?; if [ \"$rc\" -eq 0 ]; then :; elif [ \"$rc\" -eq 2 ] && cloud-init status 2>/dev/null | grep -q '^status: done$'; then echo 'cloud-init completed with recoverable warnings:'; cloud-init status --long 2>/dev/null | sed -n '/^recoverable_errors:/,$p' | sed '/^recoverable_errors:$/d;/^[[:space:]]*$/d' | head -n 20; else echo 'cloud-init did not complete successfully:' >&2; cloud-init status --long >&2 || true; exit \"$rc\"; fi"
+  max_worker_hugepage_mb = {
+    for name, worker in local.workers : name => worker.memory_mb - worker.os_reserved_memory_mb
+  }
+  cloud_init_wait_command = "rc=0; cloud-init status --wait >/tmp/opentofu-cloud-init.log 2>&1 || rc=$?; if [ \"$rc\" -eq 0 ]; then :; elif [ \"$rc\" -eq 2 ] && cloud-init status 2>/dev/null | grep -q '^status: done$'; then echo 'cloud-init completed with recoverable warnings:'; cloud-init status --long 2>/dev/null | sed -n '/^recoverable_errors:/,$p' | sed '/^recoverable_errors:$/d;/^[[:space:]]*$/d' | head -n 20; else echo 'cloud-init did not complete successfully:' >&2; cloud-init status --long >&2 || true; exit \"$rc\"; fi"
 }
 
 resource "random_password" "control_plane_join_token" {
@@ -105,7 +110,7 @@ resource "terraform_data" "worker_install" {
       error_message = "guest_ssh_private_key_path is required when automation_enabled is true."
     }
     precondition {
-      condition     = local.max_worker_hugepage_mb >= 0 && var.hugepages_1g * 1024 + var.hugepages_2m * 2 <= local.max_worker_hugepage_mb
+      condition     = local.max_worker_hugepage_mb[each.key] >= 0 && each.value.hugepages_1g * 1024 + each.value.hugepages_2m * 2 <= local.max_worker_hugepage_mb[each.key]
       error_message = "Worker hugepage pools exceed memory available after worker_os_reserved_memory_mb."
     }
   }
@@ -220,18 +225,30 @@ resource "terraform_data" "worker_configuration" {
   for_each = var.automation_enabled ? local.workers : {}
 
   depends_on = [terraform_data.worker_install]
-  triggers_replace = [
-    proxmox_virtual_environment_vm.worker[each.key].id,
-    var.hugepages_1g,
-    var.hugepages_2m,
-    var.worker_os_reserved_memory_mb,
-    join(",", local.worker_data_macs[each.key]),
-    join(",", [for i, mac in local.worker_data_macs[each.key] : mac if contains(var.worker_vfio_nic_indexes, i)]),
-    var.automation_revision,
-    filesha256("${path.module}/scripts/configure-worker.sh"),
-    filesha256("${path.module}/scripts/bind-worker-vfio"),
-    filesha256("${path.module}/scripts/verify-worker-config"),
-  ]
+  triggers_replace = {
+    worker_vm_id            = proxmox_virtual_environment_vm.worker[each.key].id
+    pool_name               = each.value.pool_name
+    hugepages_1g            = each.value.hugepages_1g
+    hugepages_2m            = each.value.hugepages_2m
+    os_reserved_memory_mb   = each.value.os_reserved_memory_mb
+    data_macs_csv           = join(",", local.worker_data_macs[each.key])
+    vfio_macs_csv           = join(",", [for i, mac in local.worker_data_macs[each.key] : mac if contains(each.value.vfio_nic_indexes, i)])
+    automation_revision     = var.automation_revision
+    configure_script_sha256 = filesha256("${path.module}/scripts/configure-worker.sh")
+    bind_script_sha256      = filesha256("${path.module}/scripts/bind-worker-vfio")
+    verify_script_sha256    = filesha256("${path.module}/scripts/verify-worker-config")
+  }
+
+  input = {
+    operation             = "configure_worker_runtime"
+    node                  = each.key
+    pool                  = each.value.pool_name
+    hugepages_1g          = each.value.hugepages_1g
+    hugepages_2m          = each.value.hugepages_2m
+    data_nic_count        = each.value.data_nic_count
+    vfio_nic_indexes      = sort(tolist(each.value.vfio_nic_indexes))
+    os_reserved_memory_mb = each.value.os_reserved_memory_mb
+  }
 
   connection {
     type        = "ssh"
@@ -266,7 +283,7 @@ resource "terraform_data" "worker_configuration" {
   provisioner "remote-exec" {
     inline = [
       "sed -i 's/\\r$//' /tmp/configure-worker.sh /tmp/bind-worker-vfio /tmp/worker-vfio-bind.service /tmp/verify-worker-config /tmp/worker-config-verify.service",
-      "sudo bash /tmp/configure-worker.sh '${var.hugepages_1g}' '${var.hugepages_2m}' '${join(",", local.worker_data_macs[each.key])}' '${join(",", [for i, mac in local.worker_data_macs[each.key] : mac if contains(var.worker_vfio_nic_indexes, i)])}' '${local.max_worker_hugepage_mb}' >/tmp/opentofu-configure-worker.log 2>&1 || { rc=$?; echo 'Worker configuration failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-configure-worker.log >&2; exit $rc; }",
+      "sudo bash /tmp/configure-worker.sh '${each.value.hugepages_1g}' '${each.value.hugepages_2m}' '${join(",", local.worker_data_macs[each.key])}' '${join(",", [for i, mac in local.worker_data_macs[each.key] : mac if contains(each.value.vfio_nic_indexes, i)])}' '${local.max_worker_hugepage_mb[each.key]}' >/tmp/opentofu-configure-worker.log 2>&1 || { rc=$?; echo 'Worker configuration failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-configure-worker.log >&2; exit $rc; }",
       "echo 'VFIO and hugepage configuration completed on ${each.key}'",
     ]
   }
@@ -456,16 +473,16 @@ resource "terraform_data" "worker_labels" {
   for_each = var.automation_enabled ? local.workers : {}
 
   depends_on = [terraform_data.worker_post_join_verify]
-  triggers_replace = [
-    terraform_data.worker_post_join_verify[each.key].id,
-    sha256(jsonencode(var.worker_node_labels)),
-    filesha256("${path.module}/scripts/configure-worker-labels.sh"),
-  ]
+  triggers_replace = {
+    worker_join_verification_id = terraform_data.worker_post_join_verify[each.key].id
+    labels_sha256               = sha256(jsonencode(local.worker_node_labels[each.key]))
+    script_sha256               = filesha256("${path.module}/scripts/configure-worker-labels.sh")
+  }
 
   input = {
     operation                    = "reconcile_worker_labels"
     node                         = each.key
-    labels                       = var.worker_node_labels
+    labels                       = local.worker_node_labels[each.key]
     remove_absent_managed_labels = true
     preserve_unmanaged_labels    = true
     verify_after_apply           = true
@@ -488,7 +505,7 @@ resource "terraform_data" "worker_labels" {
   provisioner "remote-exec" {
     inline = [
       "sed -i 's/\\r$//' /tmp/configure-worker-labels.sh",
-      "sudo bash /tmp/configure-worker-labels.sh '${each.key}' '${base64encode(jsonencode(var.worker_node_labels))}'",
+      "sudo bash /tmp/configure-worker-labels.sh '${each.key}' '${base64encode(jsonencode(local.worker_node_labels[each.key]))}'",
     ]
   }
 }
@@ -541,6 +558,8 @@ resource "terraform_data" "control_plane_tools" {
     control_plane_vm_id = proxmox_virtual_environment_vm.control_plane[each.key].id
     microk8s_channel    = var.microk8s_channel
     k9s_version         = var.k9s_version
+    kubectl_version     = var.kubectl_version
+    helm_version        = var.helm_version
     automation_revision = var.automation_revision
     script_sha256       = filesha256("${path.module}/scripts/configure-control-plane-tools.sh")
   }
@@ -549,12 +568,19 @@ resource "terraform_data" "control_plane_tools" {
     operation                   = "configure_control_plane_tools"
     node                        = each.key
     normal_user                 = var.guest_ssh_user
-    kubectl_version             = "v${local.microk8s_minor}"
+    kubectl_version             = var.kubectl_version
     enable_kubectl_completion   = true
-    install_helm                = true
+    install_helm_version        = var.helm_version
     install_k9s_version         = var.k9s_version
     verify_k9s_package_checksum = true
     verify_normal_user_access   = true
+  }
+
+  lifecycle {
+    precondition {
+      condition     = join(".", slice(split(".", var.kubectl_version), 0, 2)) == local.microk8s_minor
+      error_message = "kubectl_version must use the same major.minor release as microk8s_channel."
+    }
   }
 
   connection {
@@ -574,7 +600,7 @@ resource "terraform_data" "control_plane_tools" {
   provisioner "remote-exec" {
     inline = [
       "sed -i 's/\\r$//' /tmp/configure-control-plane-tools.sh",
-      "sudo bash /tmp/configure-control-plane-tools.sh 'v${local.microk8s_minor}' '${var.k9s_version}' >/tmp/opentofu-control-plane-tools.log 2>&1 || { rc=$?; echo 'Control-plane tool installation failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-control-plane-tools.log >&2; exit $rc; }",
+      "sudo bash /tmp/configure-control-plane-tools.sh 'v${local.microk8s_minor}' '${var.k9s_version}' '${var.kubectl_version}' '${var.helm_version}' >/tmp/opentofu-control-plane-tools.log 2>&1 || { rc=$?; echo 'Control-plane tool installation failed; last 80 log lines:' >&2; sudo tail -n 80 /tmp/opentofu-control-plane-tools.log >&2; exit $rc; }",
       "echo 'kubectl, Bash completion, Helm, and k9s verified on ${each.key}'",
     ]
   }
@@ -596,6 +622,8 @@ resource "terraform_data" "cluster_health" {
     multus_memory_request = var.multus_memory_request
     multus_memory_limit   = var.multus_memory_limit
     k9s_version           = var.k9s_version
+    kubectl_version       = var.kubectl_version
+    helm_version          = var.helm_version
     automation_revision   = var.automation_revision
     script_sha256         = filesha256("${path.module}/scripts/verify-cluster.sh")
   }
@@ -608,6 +636,8 @@ resource "terraform_data" "cluster_health" {
     verify_kubectl  = true
     verify_helm     = true
     verify_k9s      = true
+    kubectl_version = var.kubectl_version
+    helm_version    = var.helm_version
     verify_hostpath = var.enable_hostpath_storage
     verify_multus   = var.enable_multus
   }
@@ -629,7 +659,7 @@ resource "terraform_data" "cluster_health" {
   provisioner "remote-exec" {
     inline = [
       "sed -i 's/\\r$//' /tmp/verify-cluster.sh",
-      "sudo bash /tmp/verify-cluster.sh '${length(local.expected_node_names)}' '${join(",", local.expected_node_names)}' '${local.microk8s_minor}' '${var.enable_hostpath_storage}' '${var.enable_multus}' '${var.multus_version}' '${var.multus_memory_request}' '${var.multus_memory_limit}' '${local.primary_control_plane_ipv4}' '${var.k9s_version}'",
+      "sudo bash /tmp/verify-cluster.sh '${length(local.expected_node_names)}' '${join(",", local.expected_node_names)}' '${local.microk8s_minor}' '${var.enable_hostpath_storage}' '${var.enable_multus}' '${var.multus_version}' '${var.multus_memory_request}' '${var.multus_memory_limit}' '${local.primary_control_plane_ipv4}' '${var.k9s_version}' '${var.kubectl_version}' '${var.helm_version}'",
     ]
   }
 }

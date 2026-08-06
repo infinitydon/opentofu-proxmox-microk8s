@@ -23,9 +23,17 @@ output "workers" {
       data_macs      = local.worker_data_macs[name]
       vfio_macs = [
         for i, mac in local.worker_data_macs[name] : mac
-        if contains(var.worker_vfio_nic_indexes, i)
+        if contains(local.workers[name].vfio_nic_indexes, i)
       ]
-      node_labels = var.worker_node_labels
+      pool_name    = local.workers[name].pool_name
+      cpu_cores    = local.workers[name].cpu_cores
+      memory_mb    = local.workers[name].memory_mb
+      disk_gb      = local.workers[name].disk_gb
+      storage      = local.workers[name].storage
+      bridge       = local.workers[name].bridge
+      hugepages_1g = local.workers[name].hugepages_1g
+      hugepages_2m = local.workers[name].hugepages_2m
+      node_labels  = local.worker_node_labels[name]
     }
   }
 }
@@ -33,15 +41,15 @@ output "workers" {
 output "cluster_options" {
   value = {
     microk8s_channel        = var.microk8s_channel
-    hugepages_1g            = var.hugepages_1g
-    hugepages_2m            = var.hugepages_2m
     enable_hostpath_storage = var.enable_hostpath_storage
     enable_multus           = var.enable_multus
     multus_version          = var.multus_version
     multus_memory_request   = var.multus_memory_request
     multus_memory_limit     = var.multus_memory_limit
-    worker_node_labels      = var.worker_node_labels
     k9s_version             = var.k9s_version
+    kubectl_version         = var.kubectl_version
+    helm_version            = var.helm_version
+    worker_pools            = local.effective_worker_pools
   }
 }
 
@@ -53,5 +61,5 @@ output "cluster_ready" {
 
 output "worker_node_labels" {
   description = "Kubernetes labels requested for every worker node."
-  value       = var.worker_node_labels
+  value       = local.worker_node_labels
 }

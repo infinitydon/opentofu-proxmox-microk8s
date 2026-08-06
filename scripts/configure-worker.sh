@@ -3,8 +3,8 @@ set -euo pipefail
 
 pages_1g="${1:?1 GiB page count required}"
 pages_2m="${2:?2 MiB page count required}"
-all_data_macs_csv="${3:?all data NIC MACs required}"
-vfio_macs_csv="${4:?VFIO NIC MACs required}"
+all_data_macs_csv="${3-}"
+vfio_macs_csv="${4-}"
 max_hugepage_mb="${5:-6144}"
 
 if [[ ${EUID} -ne 0 ]]; then
@@ -41,25 +41,31 @@ if (( pages_1g > 0 )) && ! grep -qw pdpe1gb /proc/cpuinfo; then
   exit 1
 fi
 
-IFS=',' read -r -a all_data_macs <<< "$all_data_macs_csv"
-IFS=',' read -r -a vfio_macs <<< "$vfio_macs_csv"
+all_data_macs=()
+vfio_macs=()
+[[ -z "$all_data_macs_csv" ]] || IFS=',' read -r -a all_data_macs <<< "$all_data_macs_csv"
+[[ -z "$vfio_macs_csv" ]] || IFS=',' read -r -a vfio_macs <<< "$vfio_macs_csv"
 
 netplan=/etc/netplan/60-worker-data-nics.yaml
-{
-  echo 'network:'
-  echo '  version: 2'
-  echo '  ethernets:'
-  for i in "${!all_data_macs[@]}"; do
-    printf '    data%d:\n' "$i"
-    echo '      match:'
-    printf '        macaddress: "%s"\n' "${all_data_macs[$i]}"
-    echo '      dhcp4: false'
-    echo '      dhcp6: false'
-    echo '      link-local: []'
-    echo '      optional: true'
-  done
-} > "$netplan"
-chmod 0600 "$netplan"
+if (( ${#all_data_macs[@]} > 0 )); then
+  {
+    echo 'network:'
+    echo '  version: 2'
+    echo '  ethernets:'
+    for i in "${!all_data_macs[@]}"; do
+      printf '    data%d:\n' "$i"
+      echo '      match:'
+      printf '        macaddress: "%s"\n' "${all_data_macs[$i]}"
+      echo '      dhcp4: false'
+      echo '      dhcp6: false'
+      echo '      link-local: []'
+      echo '      optional: true'
+    done
+  } > "$netplan"
+  chmod 0600 "$netplan"
+else
+  rm -f "$netplan"
+fi
 netplan generate
 netplan apply
 

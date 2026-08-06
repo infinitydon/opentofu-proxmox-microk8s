@@ -16,7 +16,7 @@ credentials, and the remote-state backend belong in the calling root module.
 
 ```hcl
 module "microk8s" {
-  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v3.4.1"
+  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v4.0.0"
 
   node_name      = "pve"
   template_vm_id = 9006
@@ -37,9 +37,41 @@ module "microk8s" {
   worker_data_nic_count   = 4
   worker_vfio_nic_indexes = [0, 1]
   worker_node_labels = [
-    "osvbng.infinitydon.com/bng-frr-ha=true",
-    "dpdk_enabled=true",
   ]
+
+  worker_pools = {
+    dpdk = {
+      count                 = 2
+      cpu_cores             = 4
+      memory_mb             = 8192
+      disk_gb               = 40
+      storage               = "ebenezer-stor1"
+      bridge                = "vmbr0"
+      data_nic_count        = 4
+      vfio_nic_indexes      = [0, 1]
+      hugepages_1g          = 2
+      hugepages_2m          = 1024
+      os_reserved_memory_mb = 2048
+      node_labels = [
+        "osvbng.infinitydon.com/bng-frr-ha=true",
+        "dpdk-enabled=true",
+      ]
+    }
+    general = {
+      count                 = 2
+      cpu_cores             = 4
+      memory_mb             = 8192
+      disk_gb               = 40
+      storage               = "ebenezer-stor1"
+      bridge                = "vmbr0"
+      data_nic_count        = 0
+      vfio_nic_indexes      = []
+      hugepages_1g          = 0
+      hugepages_2m          = 0
+      os_reserved_memory_mb = 2048
+      node_labels           = ["workload-type=general"]
+    }
+  }
 
   hugepages_1g = 2
   hugepages_2m = 1024
@@ -51,6 +83,8 @@ module "microk8s" {
   multus_memory_limit     = "512Mi"
   microk8s_channel        = "1.35/stable"
   k9s_version             = "v0.50.18"
+  kubectl_version         = "1.35.7"
+  helm_version            = "3.21.3"
 
   automation_enabled           = true
   guest_ssh_user                = "ubuntu"
@@ -68,9 +102,19 @@ community addon. Its daemon defaults to a 256 MiB request and 512 MiB limit, rep
 the upstream quickstart manifest's 50 MiB values. When both hugepage sizes are enabled, 1 GiB pages are reserved at kernel
 boot and 2 MiB pages are allocated afterward by sysctl.
 
-Every control-plane node receives upstream kubectl, system-wide kubectl Bash
-completion, Helm, and the checksum-verified pinned `k9s_version` release. These
-tools are configured for and verified as the normal Ubuntu user.
+Every control-plane node receives exact pinned `kubectl_version` and
+`helm_version` packages, system-wide kubectl Bash completion, and the
+checksum-verified pinned `k9s_version` release. kubectl and Helm are held against
+unintended APT upgrades. The health gate verifies their exact binary versions as
+the normal Ubuntu user, and kubectl's major/minor must match `microk8s_channel`.
+
+`worker_pools` provides ASG-like independently scalable worker groups. Every pool
+can override count, CPU, memory, disk, Proxmox storage/bridge, additional NICs,
+VFIO indexes, both hugepage sizes, reserved OS memory, and node labels. All pools
+join the same control plane. Named pools automatically receive
+`opentofu.infinitydon.com/worker-pool=<pool>`. When `worker_pools = {}`, the
+legacy `worker_*`, hugepage, and shared-label inputs synthesize the original
+`microk8s-worker-NN` default pool.
 
 `worker_node_labels` applies the same list of Kubernetes `key=value` labels to
 every worker. Its default is `[]`, which adds no labels. Labels previously managed

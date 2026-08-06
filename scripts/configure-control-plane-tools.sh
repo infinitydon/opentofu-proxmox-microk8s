@@ -3,6 +3,8 @@ set -euo pipefail
 
 kubernetes_minor="${1:-v1.35}"
 k9s_version="${2:-v0.50.18}"
+kubectl_version="${3:-1.35.7}"
+helm_version="${4:-3.21.3}"
 helm_key_fingerprint='DDF78C3E6EBB2D2CC223C95C62BA89D07698DBC6'
 
 if [[ ${EUID} -ne 0 ]]; then
@@ -31,7 +33,10 @@ echo 'deb [signed-by=/usr/share/keyrings/helm.gpg] https://packages.buildkite.co
   > /etc/apt/sources.list.d/helm-stable-debian.list
 
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y kubectl helm
+apt-mark unhold kubectl helm >/dev/null 2>&1 || true
+DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades --allow-change-held-packages \
+  "kubectl=${kubectl_version}-1.1" "helm=${helm_version}-1"
+apt-mark hold kubectl helm >/dev/null
 install -d -m 0755 /etc/bash_completion.d
 kubectl completion bash > /etc/bash_completion.d/kubectl
 chmod 0644 /etc/bash_completion.d/kubectl
@@ -56,7 +61,12 @@ install -d -m 0700 -o ubuntu -g ubuntu /home/ubuntu/.kube
 microk8s config > /home/ubuntu/.kube/config
 chown ubuntu:ubuntu /home/ubuntu/.kube/config
 chmod 0600 /home/ubuntu/.kube/config
+runuser -u ubuntu -- kubectl version --client -o json \
+  | jq -e --arg version "v${kubectl_version}" '.clientVersion.gitVersion == $version' >/dev/null
 runuser -u ubuntu -- kubectl get nodes >/dev/null
+runuser -u ubuntu -- helm version --short | grep -E "^v${helm_version}([+].*)?$" >/dev/null
 runuser -u ubuntu -- helm list --all-namespaces >/dev/null
 runuser -u ubuntu -- k9s version | grep -F "$k9s_version" >/dev/null
 test -s /etc/bash_completion.d/kubectl
+apt-mark showhold | grep -Fx kubectl >/dev/null
+apt-mark showhold | grep -Fx helm >/dev/null

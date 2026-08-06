@@ -99,6 +99,48 @@ variable "worker_node_labels" {
   }
 }
 
+variable "worker_pools" {
+  description = "Named, independently scalable worker pools. When empty, legacy worker_* inputs create the default pool."
+  type = map(object({
+    count                 = number
+    cpu_cores             = optional(number)
+    memory_mb             = optional(number)
+    disk_gb               = optional(number)
+    storage               = optional(string)
+    bridge                = optional(string)
+    data_nic_count        = optional(number)
+    vfio_nic_indexes      = optional(set(number))
+    hugepages_1g          = optional(number)
+    hugepages_2m          = optional(number)
+    os_reserved_memory_mb = optional(number)
+    node_labels           = optional(list(string))
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for name, pool in var.worker_pools :
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", name)) &&
+      length(name) <= 40 && pool.count >= 0 &&
+      (pool.cpu_cores == null || pool.cpu_cores > 0) &&
+      (pool.memory_mb == null || pool.memory_mb > 0) &&
+      (pool.disk_gb == null || pool.disk_gb > 0) &&
+      (pool.data_nic_count == null || pool.data_nic_count >= 0) &&
+      (pool.hugepages_1g == null || pool.hugepages_1g >= 0) &&
+      (pool.hugepages_2m == null || pool.hugepages_2m >= 0) &&
+      alltrue([
+        for index in coalesce(pool.vfio_nic_indexes, []) :
+        index >= 0 && index < coalesce(pool.data_nic_count, var.worker_data_nic_count)
+      ]) &&
+      alltrue([
+        for label in coalesce(pool.node_labels, []) :
+        can(regex("^[^=[:space:]]+=[^=[:space:]]+$", label))
+      ])
+    ])
+    error_message = "Worker pool names/settings, VFIO indexes, and key=value node labels must be valid."
+  }
+}
+
 variable "hugepages_1g" {
   description = "Number of 1 GiB pages reserved at worker boot."
   type        = number
@@ -152,6 +194,28 @@ variable "k9s_version" {
   validation {
     condition     = can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+$", var.k9s_version))
     error_message = "k9s_version must be a release tag such as v0.50.18."
+  }
+}
+
+variable "kubectl_version" {
+  description = "Exact upstream kubectl semantic version installed and held on control-plane nodes."
+  type        = string
+  default     = "1.35.7"
+
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.kubectl_version))
+    error_message = "kubectl_version must be an exact semantic version such as 1.35.7."
+  }
+}
+
+variable "helm_version" {
+  description = "Exact upstream Helm semantic version installed and held on control-plane nodes."
+  type        = string
+  default     = "3.21.3"
+
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.helm_version))
+    error_message = "helm_version must be an exact semantic version such as 3.21.3."
   }
 }
 
