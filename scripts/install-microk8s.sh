@@ -12,6 +12,14 @@ apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y cloud-guest-utils qemu-guest-agent jq pciutils
 systemctl enable --now qemu-guest-agent
 
+# Kubelet/cAdvisor and CNI agents consume inotify instances. Cloud images can
+# inherit limits low enough for kubelite to fail with inotify_init: EMFILE.
+cat > /etc/sysctl.d/99-kubernetes-inotify.conf <<'EOF'
+fs.inotify.max_user_instances = 8192
+fs.inotify.max_user_watches = 1048576
+EOF
+sysctl --system >/dev/null
+
 # Proxmox expands the virtual disk; grow the Ubuntu root partition and
 # filesystem so the requested module disk size is usable inside the guest.
 root_source="$(findmnt -n -o SOURCE /)"
