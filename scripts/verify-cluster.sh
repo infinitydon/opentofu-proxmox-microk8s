@@ -32,22 +32,29 @@ chmod 0600 /home/ubuntu/.kube/config
 kctl=(runuser -u ubuntu -- kubectl)
 helmctl=(runuser -u ubuntu -- helm)
 
-"${kctl[@]}" wait nodes --all --for=condition=Ready --timeout=600s
-actual_nodes="$("${kctl[@]}" get nodes --no-headers | wc -l)"
-[[ "$actual_nodes" -eq "$expected_nodes" ]] || {
-  echo "Expected ${expected_nodes} nodes, found ${actual_nodes}." >&2
-  exit 1
-}
-
 IFS=',' read -r -a expected_names <<< "$expected_names_csv"
 for node in "${expected_names[@]}"; do
-  "${kctl[@]}" get node "$node" >/dev/null
+  for attempt in $(seq 1 120); do
+    "${kctl[@]}" get node "$node" >/dev/null 2>&1 && break
+    if [[ "$attempt" -eq 120 ]]; then
+      echo "Expected node ${node} did not register within 600 seconds." >&2
+      exit 1
+    fi
+    sleep 5
+  done
+  "${kctl[@]}" wait node/"$node" --for=condition=Ready --timeout=600s
   version="$("${kctl[@]}" get node "$node" -o jsonpath='{.status.nodeInfo.kubeletVersion}')"
   [[ "$version" == "v${microk8s_minor}."* ]] || {
     echo "$node runs $version, expected v${microk8s_minor}.x." >&2
     exit 1
   }
 done
+
+actual_nodes="$("${kctl[@]}" get nodes --no-headers | wc -l)"
+[[ "$actual_nodes" -eq "$expected_nodes" ]] || {
+  echo "Expected ${expected_nodes} nodes, found ${actual_nodes}." >&2
+  exit 1
+}
 
 "${kctl[@]}" version --client >/dev/null
 "${helmctl[@]}" version >/dev/null

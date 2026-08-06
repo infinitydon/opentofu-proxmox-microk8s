@@ -43,4 +43,6 @@ fi
 usermod -aG microk8s ubuntu
 mkdir -p /home/ubuntu/.kube
 chown -R ubuntu:ubuntu /home/ubuntu/.kube
+systemctl reset-failed 'snap.microk8s.*' 2>/dev/null || true
+microk8s start
 microk8s status --wait-ready --timeout 600

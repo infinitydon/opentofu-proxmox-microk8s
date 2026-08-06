@@ -16,7 +16,7 @@ credentials, and the remote-state backend belong in the calling root module.
 
 ```hcl
 module "microk8s" {
-  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v3.1.3"
+  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v3.1.4"
 
   node_name      = "pve"
   template_vm_id = 9006
