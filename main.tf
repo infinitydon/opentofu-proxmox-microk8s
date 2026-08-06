@@ -2,7 +2,6 @@ locals {
   control_planes = {
     for i in range(var.control_plane_count) : format("microk8s-cp-%02d", i + 1) => {
       index = i
-      vm_id = var.first_vm_id + i
       mac   = format("02:10:00:00:%02x:00", i + 1)
     }
   }
@@ -10,7 +9,6 @@ locals {
   workers = {
     for i in range(var.worker_count) : format("microk8s-worker-%02d", i + 1) => {
       index = i
-      vm_id = var.first_vm_id + var.control_plane_count + i
       mac   = format("02:20:00:00:%02x:00", i + 1)
       data_macs = [
         for nic in range(var.worker_data_nic_count) :
@@ -24,7 +22,6 @@ resource "proxmox_virtual_environment_vm" "control_plane" {
   for_each = local.control_planes
 
   name      = each.key
-  vm_id     = each.value.vm_id
   node_name = var.node_name
   tags      = ["microk8s", "control-plane", "opentofu"]
 
@@ -37,26 +34,26 @@ resource "proxmox_virtual_environment_vm" "control_plane" {
   }
 
   cpu {
-    cores = var.cpu_cores
+    cores = var.control_plane_cpu_cores
     type  = "host"
   }
 
   memory {
-    dedicated = var.memory_mb
-    floating  = var.memory_mb
+    dedicated = var.control_plane_memory_mb
+    floating  = var.control_plane_memory_mb
   }
 
   disk {
     datastore_id = var.storage
     interface    = "scsi0"
-    size         = var.disk_gb
+    size         = var.control_plane_disk_gb
   }
 
   network_device {
     bridge      = var.bridge
     model       = "virtio"
     mac_address = each.value.mac
-    queues      = var.cpu_cores
+    queues      = var.control_plane_cpu_cores
   }
 
   initialization {
@@ -75,7 +72,6 @@ resource "proxmox_virtual_environment_vm" "worker" {
   for_each = local.workers
 
   name      = each.key
-  vm_id     = each.value.vm_id
   node_name = var.node_name
   machine   = "q35,viommu=intel"
   tags      = ["microk8s", "worker", "opentofu"]
@@ -89,26 +85,26 @@ resource "proxmox_virtual_environment_vm" "worker" {
   }
 
   cpu {
-    cores = var.cpu_cores
+    cores = var.worker_cpu_cores
     type  = "host"
   }
 
   memory {
-    dedicated = var.memory_mb
-    floating  = var.memory_mb
+    dedicated = var.worker_memory_mb
+    floating  = var.worker_memory_mb
   }
 
   disk {
     datastore_id = var.storage
     interface    = "scsi0"
-    size         = var.disk_gb
+    size         = var.worker_disk_gb
   }
 
   network_device {
     bridge      = var.bridge
     model       = "virtio"
     mac_address = each.value.mac
-    queues      = var.cpu_cores
+    queues      = var.worker_cpu_cores
   }
 
   dynamic "network_device" {
@@ -117,7 +113,7 @@ resource "proxmox_virtual_environment_vm" "worker" {
       bridge      = var.bridge
       model       = "virtio"
       mac_address = network_device.value
-      queues      = var.cpu_cores
+      queues      = var.worker_cpu_cores
     }
   }
 

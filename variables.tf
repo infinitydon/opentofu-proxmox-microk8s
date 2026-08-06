@@ -23,22 +23,32 @@ variable "worker_count" {
   default = 2
 }
 
-variable "first_vm_id" {
-  type    = number
-  default = 170
-}
-
-variable "cpu_cores" {
+variable "control_plane_cpu_cores" {
   type    = number
   default = 4
 }
 
-variable "memory_mb" {
+variable "control_plane_memory_mb" {
   type    = number
   default = 8192
 }
 
-variable "disk_gb" {
+variable "control_plane_disk_gb" {
+  type    = number
+  default = 50
+}
+
+variable "worker_cpu_cores" {
+  type    = number
+  default = 4
+}
+
+variable "worker_memory_mb" {
+  type    = number
+  default = 8192
+}
+
+variable "worker_disk_gb" {
   type    = number
   default = 50
 }
@@ -46,12 +56,6 @@ variable "disk_gb" {
 variable "bridge" {
   type    = string
   default = "vmbr0"
-}
-
-variable "management_ipv4_prefix" {
-  description = "Prefix used to select the management IPv4 address reported by the guest agent."
-  type        = string
-  default     = "192.168.88."
 }
 
 variable "worker_data_nic_count" {

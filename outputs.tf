@@ -2,10 +2,10 @@ output "control_planes" {
   value = {
     for name, vm in proxmox_virtual_environment_vm.control_plane : name => {
       vm_id = vm.vm_id
-      management_ipv4 = one([
-        for address in flatten(vm.ipv4_addresses) : address
-        if startswith(address, var.management_ipv4_prefix)
-      ])
+      management_ipv4 = one(vm.ipv4_addresses[index(
+        [for mac in vm.mac_addresses : lower(mac)],
+        lower(local.control_planes[name].mac)
+      )])
     }
   }
 }
@@ -14,10 +14,10 @@ output "workers" {
   value = {
     for name, vm in proxmox_virtual_environment_vm.worker : name => {
       vm_id = vm.vm_id
-      management_ipv4 = one([
-        for address in flatten(vm.ipv4_addresses) : address
-        if startswith(address, var.management_ipv4_prefix)
-      ])
+      management_ipv4 = one(vm.ipv4_addresses[index(
+        [for mac in vm.mac_addresses : lower(mac)],
+        lower(local.workers[name].mac)
+      )])
       data_macs = local.workers[name].data_macs
       vfio_macs = [
         for i, mac in local.workers[name].data_macs : mac
