@@ -25,6 +25,7 @@ output "workers" {
         for i, mac in local.worker_data_macs[name] : mac
         if contains(var.worker_vfio_nic_indexes, i)
       ]
+      node_labels = var.worker_node_labels
     }
   }
 }
@@ -39,6 +40,7 @@ output "cluster_options" {
     multus_version          = var.multus_version
     multus_memory_request   = var.multus_memory_request
     multus_memory_limit     = var.multus_memory_limit
+    worker_node_labels      = var.worker_node_labels
   }
 }
 
@@ -46,4 +48,9 @@ output "cluster_ready" {
   description = "True only after enabled OpenTofu guest automation and health gates complete."
   value       = var.automation_enabled ? true : null
   depends_on  = [terraform_data.cluster_health]
+}
+
+output "worker_node_labels" {
+  description = "Kubernetes labels requested for every worker node."
+  value       = var.worker_node_labels
 }

@@ -16,7 +16,7 @@ credentials, and the remote-state backend belong in the calling root module.
 
 ```hcl
 module "microk8s" {
-  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v3.2.2"
+  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v3.3.0"
 
   node_name      = "pve"
   template_vm_id = 9006
@@ -75,6 +75,14 @@ touching labels managed elsewhere.
 Verbose installer output is retained on each node under
 `/tmp/opentofu-*.log`. Normal applies show concise phase completion and health-gate
 results; if a phase fails, its last 80 log lines are printed automatically.
+The `terraform_data` resources expose structured `input` fields so a plan shows
+the intended label reconciliation and health checks. OpenTofu cannot introspect
+individual commands inside a shell provisioner.
+
+Changing only `worker_node_labels` reruns label reconciliation and verification;
+it does not rerun the full cluster health gate. The health gate runs on initial
+creation and when one of its Kubernetes/addon/tool inputs, implementation hash, or
+`automation_revision` changes.
 
 ## Automated success criteria
 
