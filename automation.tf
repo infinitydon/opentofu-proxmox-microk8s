@@ -537,13 +537,25 @@ resource "terraform_data" "control_plane_tools" {
   for_each = var.automation_enabled ? local.control_planes : {}
 
   depends_on = [terraform_data.addons]
-  triggers_replace = [
-    proxmox_virtual_environment_vm.control_plane[each.key].id,
-    var.microk8s_channel,
-    var.k9s_version,
-    var.automation_revision,
-    filesha256("${path.module}/scripts/configure-control-plane-tools.sh"),
-  ]
+  triggers_replace = {
+    control_plane_vm_id = proxmox_virtual_environment_vm.control_plane[each.key].id
+    microk8s_channel    = var.microk8s_channel
+    k9s_version         = var.k9s_version
+    automation_revision = var.automation_revision
+    script_sha256       = filesha256("${path.module}/scripts/configure-control-plane-tools.sh")
+  }
+
+  input = {
+    operation                   = "configure_control_plane_tools"
+    node                        = each.key
+    normal_user                 = var.guest_ssh_user
+    kubectl_version             = "v${local.microk8s_minor}"
+    enable_kubectl_completion   = true
+    install_helm                = true
+    install_k9s_version         = var.k9s_version
+    verify_k9s_package_checksum = true
+    verify_normal_user_access   = true
+  }
 
   connection {
     type        = "ssh"
@@ -575,19 +587,18 @@ resource "terraform_data" "cluster_health" {
     terraform_data.control_plane_tools,
     terraform_data.worker_post_join_verify,
   ]
-  triggers_replace = [
-    join(",", local.expected_node_names),
-    var.microk8s_channel,
-    var.enable_hostpath_storage,
-    var.enable_multus,
-    var.multus_version,
-    var.multus_memory_request,
-    var.multus_memory_limit,
-    var.k9s_version,
-    var.automation_revision,
-    filesha256("${path.module}/scripts/verify-cluster.sh"),
-  ]
-
+  triggers_replace = {
+    expected_nodes_csv    = join(",", local.expected_node_names)
+    microk8s_channel      = var.microk8s_channel
+    hostpath_enabled      = var.enable_hostpath_storage
+    multus_enabled        = var.enable_multus
+    multus_version        = var.multus_version
+    multus_memory_request = var.multus_memory_request
+    multus_memory_limit   = var.multus_memory_limit
+    k9s_version           = var.k9s_version
+    automation_revision   = var.automation_revision
+    script_sha256         = filesha256("${path.module}/scripts/verify-cluster.sh")
+  }
 
   input = {
     operation       = "verify_cluster_health"

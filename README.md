@@ -16,7 +16,7 @@ credentials, and the remote-state backend belong in the calling root module.
 
 ```hcl
 module "microk8s" {
-  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v3.4.0"
+  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v3.4.1"
 
   node_name      = "pve"
   template_vm_id = 9006
@@ -83,6 +83,9 @@ results; if a phase fails, its last 80 log lines are printed automatically.
 The `terraform_data` resources expose structured `input` fields so a plan shows
 the intended label reconciliation and health checks. OpenTofu cannot introspect
 individual commands inside a shell provisioner.
+Script fingerprints remain necessary to rerun automation when implementation
+changes, but operational resources use named trigger objects such as
+`script_sha256` rather than anonymous positional hash values.
 
 Changing only `worker_node_labels` reruns label reconciliation and verification;
 it does not rerun the full cluster health gate. The health gate runs on initial
