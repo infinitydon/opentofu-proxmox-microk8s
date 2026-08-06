@@ -9,8 +9,9 @@ if [[ ${EUID} -ne 0 ]]; then
 fi
 
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y cloud-guest-utils qemu-guest-agent jq pciutils
+DEBIAN_FRONTEND=noninteractive apt-get install -y cloud-guest-utils jq openssh-server pciutils qemu-guest-agent
 systemctl enable --now qemu-guest-agent
+systemctl enable --now ssh
 
 # Kubelet/cAdvisor and CNI agents consume inotify instances. Cloud images can
 # inherit limits low enough for kubelite to fail with inotify_init: EMFILE.
@@ -24,8 +25,8 @@ sysctl --system >/dev/null
 # filesystem so the requested module disk size is usable inside the guest.
 root_source="$(findmnt -n -o SOURCE /)"
 root_type="$(findmnt -n -o FSTYPE /)"
-root_parent="$(lsblk -no PKNAME "$root_source" 2>/dev/null || true)"
-root_partnum="$(lsblk -no PARTN "$root_source" 2>/dev/null || true)"
+root_parent="$(lsblk -no PKNAME "$root_source" 2>/dev/null | awk 'NF {print $1; exit}' || true)"
+root_partnum="$(lsblk -no PARTN "$root_source" 2>/dev/null | tr -dc '0-9' || true)"
 if [[ -n "$root_parent" && -n "$root_partnum" ]]; then
   growpart "/dev/$root_parent" "$root_partnum" || true
 fi

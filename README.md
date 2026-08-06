@@ -16,7 +16,7 @@ credentials, and the remote-state backend belong in the calling root module.
 
 ```hcl
 module "microk8s" {
-  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v4.0.0"
+  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v4.0.1"
 
   node_name      = "pve"
   template_vm_id = 9006
@@ -140,6 +140,9 @@ Ubuntu Noble cloud-init may return exit code 2 for a completed run containing
 recoverable warnings. Automation accepts that code only when the final status is
 exactly `done`, prints the concise recoverable-warning section, and continues.
 Fatal, incomplete, or error states still fail the apply.
+Guest automation explicitly installs and enables OpenSSH before any conditional
+reboot so remote convergence remains available even when a cloud template relies
+on transient socket activation.
 
 ## Automated success criteria
 
