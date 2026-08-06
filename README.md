@@ -1,9 +1,9 @@
 # OpenTofu Proxmox MicroK8s module
 
 Reusable OpenTofu module that creates MicroK8s control-plane and worker VMs on
-Proxmox VE. Proxmox allocates VM IDs. Management addresses are resolved by matching
-the configured management NIC MAC against QEMU guest-agent data, so no subnet is
-hardcoded or required.
+Proxmox VE. Proxmox allocates both VM IDs and NIC MAC addresses. Management
+addresses are read from the first NIC's QEMU guest-agent data, so no subnet or MAC
+address is hardcoded or required.
 
 Control-plane and worker resources are independently configurable. Workers can
 have additional VirtIO NICs, selected guest NICs persistently bound to `vfio-pci`,
@@ -16,7 +16,7 @@ credentials, and the remote-state backend belong in the calling root module.
 
 ```hcl
 module "microk8s" {
-  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v2.0.0"
+  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v3.1.0"
 
   node_name      = "pve"
   template_vm_id = 9006
@@ -80,11 +80,11 @@ worker separately verifies persistent VFIO bindings, exact hugepage counts,
 OpenTofu apply. This is deployment-time convergence, not continuous monitoring;
 Prometheus or another monitoring system should handle ongoing health after apply.
 
-Because management addresses use DHCP, configure DHCP reservations for the
-module-generated management MAC addresses when an OS-required reboot must converge
-in one apply. OpenTofu cannot refresh a provider-computed DHCP address in the middle
-of an apply. If a lease changes during reboot, rerun `tofu apply`; QEMU guest-agent
-data is then refreshed and the remaining idempotent gates continue.
+The first control-plane address is recorded as part of installation. A later address
+change fails the apply with an explicit drift error; routine automation never edits
+dqlite addresses, worker proxy endpoints, kubeconfigs, or MicroK8s certificates.
+Restore the original DHCP lease or perform a deliberate MicroK8s address migration.
+Normal lease renewal with the same address requires no reservation or special action.
 
 The private-key path is evaluated on the machine running OpenTofu. The key contents
 are not a module input, avoiding storage of the private key in OpenTofu state.

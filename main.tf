@@ -2,18 +2,12 @@ locals {
   control_planes = {
     for i in range(var.control_plane_count) : format("microk8s-cp-%02d", i + 1) => {
       index = i
-      mac   = format("02:10:00:00:%02x:00", i + 1)
     }
   }
 
   workers = {
     for i in range(var.worker_count) : format("microk8s-worker-%02d", i + 1) => {
       index = i
-      mac   = format("02:20:00:00:%02x:00", i + 1)
-      data_macs = [
-        for nic in range(var.worker_data_nic_count) :
-        format("02:20:%02x:%02x:%02x:01", i + 1, nic + 1, nic + 1)
-      ]
     }
   }
 }
@@ -50,10 +44,9 @@ resource "proxmox_virtual_environment_vm" "control_plane" {
   }
 
   network_device {
-    bridge      = var.bridge
-    model       = "virtio"
-    mac_address = each.value.mac
-    queues      = var.control_plane_cpu_cores
+    bridge = var.bridge
+    model  = "virtio"
+    queues = var.control_plane_cpu_cores
   }
 
   initialization {
@@ -101,19 +94,17 @@ resource "proxmox_virtual_environment_vm" "worker" {
   }
 
   network_device {
-    bridge      = var.bridge
-    model       = "virtio"
-    mac_address = each.value.mac
-    queues      = var.worker_cpu_cores
+    bridge = var.bridge
+    model  = "virtio"
+    queues = var.worker_cpu_cores
   }
 
   dynamic "network_device" {
-    for_each = each.value.data_macs
+    for_each = range(var.worker_data_nic_count)
     content {
-      bridge      = var.bridge
-      model       = "virtio"
-      mac_address = network_device.value
-      queues      = var.worker_cpu_cores
+      bridge = var.bridge
+      model  = "virtio"
+      queues = var.worker_cpu_cores
     }
   }
 

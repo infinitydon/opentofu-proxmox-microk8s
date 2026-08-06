@@ -16,12 +16,12 @@ if [[ ${EUID} -ne 0 ]]; then
   exit 1
 fi
 
-# A DHCP lease change requires a new API server certificate SAN. Rotate only
-# server.crt when needed, then refresh the normal user's kubeconfig.
+# Address changes are explicit recovery operations. Never rotate certificates
+# from a routine OpenTofu health check.
 if ! openssl x509 -in /var/snap/microk8s/current/certs/server.crt \
   -noout -checkip "$control_plane_ipv4" >/dev/null 2>&1; then
-  microk8s refresh-certs -e server.crt
-  microk8s status --wait-ready
+  echo "The MicroK8s API certificate does not contain ${control_plane_ipv4}; refusing automatic certificate rotation." >&2
+  exit 1
 fi
 
 install -d -m 0700 -o ubuntu -g ubuntu /home/ubuntu/.kube

@@ -5,19 +5,16 @@ locals {
     if name != local.primary_control_plane_name
   }
   control_plane_ipv4 = {
-    for name, vm in proxmox_virtual_environment_vm.control_plane : name => one(
-      vm.ipv4_addresses[index(
-        [for mac in vm.mac_addresses : lower(mac)],
-        lower(local.control_planes[name].mac)
-      )]
-    )
+    for name, vm in proxmox_virtual_environment_vm.control_plane : name => one(vm.ipv4_addresses[0])
   }
   worker_ipv4 = {
-    for name, vm in proxmox_virtual_environment_vm.worker : name => one(
-      vm.ipv4_addresses[index(
-        [for mac in vm.mac_addresses : lower(mac)],
-        lower(local.workers[name].mac)
-      )]
+    for name, vm in proxmox_virtual_environment_vm.worker : name => one(vm.ipv4_addresses[0])
+  }
+  worker_data_macs = {
+    for name, vm in proxmox_virtual_environment_vm.worker : name => slice(
+      vm.mac_addresses,
+      1,
+      1 + var.worker_data_nic_count
     )
   }
   primary_control_plane_ipv4 = local.control_plane_ipv4[local.primary_control_plane_name]
@@ -75,6 +72,7 @@ resource "terraform_data" "control_plane_install" {
     inline = [
       "sed -i 's/\\r$//' /tmp/install-microk8s.sh",
       "sudo bash /tmp/install-microk8s.sh '${var.microk8s_channel}'",
+      "if ! sudo test -e /var/lib/opentofu-control-plane-ip; then printf '%s\\n' '${local.control_plane_ipv4[each.key]}' | sudo tee /var/lib/opentofu-control-plane-ip >/dev/null; fi",
     ]
   }
 }
@@ -154,10 +152,35 @@ resource "time_sleep" "control_plane_reboot_wait" {
   }
 }
 
+resource "terraform_data" "control_plane_ip_guard" {
+  for_each = var.automation_enabled ? local.control_planes : {}
+
+  depends_on = [time_sleep.control_plane_reboot_wait]
+  triggers_replace = [
+    proxmox_virtual_environment_vm.control_plane[each.key].id,
+    local.control_plane_ipv4[each.key],
+  ]
+
+  connection {
+    type        = "ssh"
+    host        = local.control_plane_ipv4[each.key]
+    port        = var.guest_ssh_port
+    user        = var.guest_ssh_user
+    private_key = file(var.guest_ssh_private_key_path)
+    timeout     = "15m"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "recorded=$(sudo cat /var/lib/opentofu-control-plane-ip); if [ \"$recorded\" != '${local.control_plane_ipv4[each.key]}' ]; then echo 'Control-plane IP drift detected: installed='\"$recorded\"' current=${local.control_plane_ipv4[each.key]}. Restore the original address or perform an explicit MicroK8s address migration.' >&2; exit 1; fi",
+    ]
+  }
+}
+
 resource "terraform_data" "control_plane_verify" {
   for_each = var.automation_enabled ? local.control_planes : {}
 
-  depends_on       = [time_sleep.control_plane_reboot_wait]
+  depends_on       = [terraform_data.control_plane_ip_guard]
   triggers_replace = [time_sleep.control_plane_reboot_wait[each.key].id]
 
   connection {
@@ -187,8 +210,8 @@ resource "terraform_data" "worker_configuration" {
     var.hugepages_1g,
     var.hugepages_2m,
     var.worker_os_reserved_memory_mb,
-    join(",", local.workers[each.key].data_macs),
-    join(",", [for i, mac in local.workers[each.key].data_macs : mac if contains(var.worker_vfio_nic_indexes, i)]),
+    join(",", local.worker_data_macs[each.key]),
+    join(",", [for i, mac in local.worker_data_macs[each.key] : mac if contains(var.worker_vfio_nic_indexes, i)]),
     var.automation_revision,
     filesha256("${path.module}/scripts/configure-worker.sh"),
     filesha256("${path.module}/scripts/bind-worker-vfio"),
@@ -228,7 +251,7 @@ resource "terraform_data" "worker_configuration" {
   provisioner "remote-exec" {
     inline = [
       "sed -i 's/\\r$//' /tmp/configure-worker.sh /tmp/bind-worker-vfio /tmp/worker-vfio-bind.service /tmp/verify-worker-config /tmp/worker-config-verify.service",
-      "sudo bash /tmp/configure-worker.sh '${var.hugepages_1g}' '${var.hugepages_2m}' '${join(",", local.workers[each.key].data_macs)}' '${join(",", [for i, mac in local.workers[each.key].data_macs : mac if contains(var.worker_vfio_nic_indexes, i)])}' '${local.max_worker_hugepage_mb}'",
+      "sudo bash /tmp/configure-worker.sh '${var.hugepages_1g}' '${var.hugepages_2m}' '${join(",", local.worker_data_macs[each.key])}' '${join(",", [for i, mac in local.worker_data_macs[each.key] : mac if contains(var.worker_vfio_nic_indexes, i)])}' '${local.max_worker_hugepage_mb}'",
     ]
   }
 }
@@ -384,9 +407,6 @@ resource "terraform_data" "worker_join" {
   provisioner "remote-exec" {
     inline = [
       "if ! sudo microk8s kubectl get node '${local.primary_control_plane_name}' >/dev/null 2>&1; then sudo microk8s join '${local.primary_control_plane_ipv4}:25000/${random_password.worker_join_token[each.key].result}' --worker; else echo 'Worker already joined'; fi",
-      "sudo sed -Ei 's#address: [0-9.]+:16443#address: ${local.primary_control_plane_ipv4}:16443#g' /var/snap/microk8s/current/args/traefik/provider.yaml",
-      "sudo systemctl restart snap.microk8s.daemon-apiserver-proxy.service",
-      "for attempt in $(seq 1 60); do if sudo journalctl -u snap.microk8s.daemon-apiserver-proxy.service --since '-2 minutes' --no-pager | grep -Fq 'ready to proxy client requests to [${local.primary_control_plane_ipv4}:16443]'; then break; fi; if [ \"$attempt\" -eq 60 ]; then sudo journalctl -u snap.microk8s.daemon-apiserver-proxy.service -n 50 --no-pager; exit 1; fi; sleep 2; done",
     ]
   }
 }

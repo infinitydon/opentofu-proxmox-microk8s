@@ -1,11 +1,9 @@
 output "control_planes" {
   value = {
     for name, vm in proxmox_virtual_environment_vm.control_plane : name => {
-      vm_id = vm.vm_id
-      management_ipv4 = one(vm.ipv4_addresses[index(
-        [for mac in vm.mac_addresses : lower(mac)],
-        lower(local.control_planes[name].mac)
-      )])
+      vm_id           = vm.vm_id
+      management_ipv4 = one(vm.ipv4_addresses[0])
+      management_mac  = vm.mac_addresses[0]
     }
   }
 }
@@ -13,14 +11,12 @@ output "control_planes" {
 output "workers" {
   value = {
     for name, vm in proxmox_virtual_environment_vm.worker : name => {
-      vm_id = vm.vm_id
-      management_ipv4 = one(vm.ipv4_addresses[index(
-        [for mac in vm.mac_addresses : lower(mac)],
-        lower(local.workers[name].mac)
-      )])
-      data_macs = local.workers[name].data_macs
+      vm_id           = vm.vm_id
+      management_ipv4 = one(vm.ipv4_addresses[0])
+      management_mac  = vm.mac_addresses[0]
+      data_macs       = local.worker_data_macs[name]
       vfio_macs = [
-        for i, mac in local.workers[name].data_macs : mac
+        for i, mac in local.worker_data_macs[name] : mac
         if contains(var.worker_vfio_nic_indexes, i)
       ]
     }
