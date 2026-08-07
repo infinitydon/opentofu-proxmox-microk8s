@@ -294,8 +294,16 @@ resource "terraform_data" "worker_configuration" {
 resource "terraform_data" "worker_reboot" {
   for_each = local.automation_enabled ? local.workers : {}
 
-  depends_on       = [terraform_data.worker_configuration]
-  triggers_replace = [terraform_data.worker_configuration[each.key].id]
+  depends_on = [terraform_data.worker_configuration]
+  triggers_replace = {
+    worker_configuration_id = terraform_data.worker_configuration[each.key].id
+  }
+
+  input = {
+    operation = "conditionally_reboot_worker"
+    node      = each.key
+    behavior  = "reboot_only_when_worker_configuration_requires_it"
+  }
 
   connection {
     type        = "ssh"
@@ -319,15 +327,29 @@ resource "time_sleep" "worker_reboot_wait" {
   depends_on      = [terraform_data.worker_reboot]
   create_duration = local.worker_reboot_wait
   triggers = {
-    reboot_id = terraform_data.worker_reboot[each.key].id
+    operation        = "wait_for_possible_worker_reboot"
+    node             = each.key
+    wait_duration    = local.worker_reboot_wait
+    worker_reboot_id = terraform_data.worker_reboot[each.key].id
   }
 }
 
 resource "terraform_data" "worker_verify" {
   for_each = local.automation_enabled ? local.workers : {}
 
-  depends_on       = [time_sleep.worker_reboot_wait]
-  triggers_replace = [time_sleep.worker_reboot_wait[each.key].id]
+  depends_on = [time_sleep.worker_reboot_wait]
+  triggers_replace = {
+    worker_reboot_wait_id = time_sleep.worker_reboot_wait[each.key].id
+  }
+
+  input = {
+    operation             = "verify_worker_runtime"
+    node                  = each.key
+    expected_data_nics    = each.value.data_nic_count
+    expected_vfio_devices = length(each.value.vfio_nic_indexes)
+    verify_hugepages      = true
+    verify_dpdk_devbind   = true
+  }
 
   connection {
     type        = "ssh"
