@@ -1,0 +1,9 @@
+microk8s_channel: 1.35/stable
+kubectl_version: 1.35.7
+helm_version: 3.21.3
+k9s_version: v0.50.18
+hostpath_storage_enabled: true
+multus_enabled: true
+multus_version: v4.3.0
+multus_memory_request: 256Mi
+multus_memory_limit: 512Mi

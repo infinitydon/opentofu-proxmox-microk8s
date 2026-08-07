@@ -15,7 +15,7 @@ No worker sizing or networking inputs exist outside `worker_pools`. Each pool is
 
 ```hcl
 module "microk8s" {
-  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v5.0.0"
+  source = "git::https://github.com/infinitydon/opentofu-proxmox-microk8s.git?ref=v5.0.5"
 
   node_name      = "pve"
   template_vm_id = 9006
@@ -109,3 +109,27 @@ The worker-pool submodule is also independently addressable at `//modules/worker
 ## Completion semantics
 
 `cluster_ready=true` is returned only after all named nodes are Ready, requested labels are reconciled, hostpath storage and upstream Multus thick plugin are rolled out, a Multus smoke pod succeeds, and pinned kubectl, Helm, k9s, and shell completion are verified.
+
+## Linux OAM workflow
+
+For repeatable operation from Windows or Linux, the repository includes a
+tested Linux OAM workflow that separates responsibilities:
+
+- [`examples/postgres-backend`](examples/postgres-backend) documents and
+  bootstraps the dedicated PostgreSQL remote-state VM.
+- [`examples/oam-vm`](examples/oam-vm) creates and bootstraps the independent
+  Ubuntu management VM.
+- [`examples/oam-cluster`](examples/oam-cluster) uses OpenTofu only for Proxmox
+  infrastructure and Ansible for MicroK8s configuration and verification.
+
+The OAM cluster workflow supports odd-sized control-plane quorums, independent
+worker pools, VFIO and hugepages, labels, upstream Multus thick plugin,
+hostpath storage, pinned client tools, safe scale-down, and a complete health
+gate. It handles Ubuntu reboot requirements automatically: control planes are
+rebooted serially to preserve quorum, while workers reboot when Ubuntu or their
+VFIO/hugepage configuration requires it.
+
+Proxmox mutations are serialized by default in the OAM example because
+concurrent clone and raw-disk expansion operations can race on some storage.
+See the example READMEs for PostgreSQL environment placeholders, OAM bootstrap,
+deployment, destruction, recovery, and validation procedures.

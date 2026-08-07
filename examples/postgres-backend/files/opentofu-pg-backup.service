@@ -1,0 +1,9 @@
+[Unit]
+Description=Back up the OpenTofu PostgreSQL state database
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/opentofu-pg-backup
+

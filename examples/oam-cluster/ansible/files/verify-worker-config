@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+. /etc/worker-hugepages.conf
+
+actual_1g=$(< /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages)
+actual_2m=$(< /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages)
+[[ "$actual_1g" -eq "$PAGES_1G" ]] || { echo "1 GiB hugepages: wanted $PAGES_1G, got $actual_1g" >&2; exit 1; }
+[[ "$actual_2m" -eq "$PAGES_2M" ]] || { echo "2 MiB hugepages: wanted $PAGES_2M, got $actual_2m" >&2; exit 1; }
+
+while read -r bdf _; do
+  [[ -n "$bdf" ]] || continue
+  driver=$(basename "$(readlink -f "/sys/bus/pci/devices/$bdf/driver")")
+  [[ "$driver" == vfio-pci ]] || { echo "$bdf uses $driver, not vfio-pci" >&2; exit 1; }
+done < /etc/worker-vfio-pci.list

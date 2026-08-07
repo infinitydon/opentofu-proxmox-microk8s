@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+backup_dir="/var/backups/opentofu-postgres"
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+target="${backup_dir}/opentofu_backend-${timestamp}.dump"
+
+install -d -o postgres -g postgres -m 0700 "$backup_dir"
+sudo -u postgres pg_dump --format=custom --file="$target" opentofu_backend
+chmod 0600 "$target"
+sudo -u postgres find "$backup_dir" -type f -name 'opentofu_backend-*.dump' -mtime +14 -delete

@@ -1,0 +1,14 @@
+---
+- name: Remove workers cleanly before infrastructure destruction
+  hosts: workers
+  serial: 1
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Leave MicroK8s
+      ansible.builtin.command: microk8s leave
+      failed_when: false
+    - name: Delete Kubernetes Node
+      ansible.builtin.command: microk8s kubectl delete node {{ inventory_hostname }} --ignore-not-found=true --wait=false
+      delegate_to: "{{ groups['primary_control_plane'][0] }}"
+      failed_when: false

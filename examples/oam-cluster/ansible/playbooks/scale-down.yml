@@ -1,0 +1,42 @@
+---
+- name: Quiesce workers removed by the saved OpenTofu plan
+  hosts: workers
+  serial: 1
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Leave MicroK8s
+      ansible.builtin.command: microk8s leave
+      when: inventory_hostname in removed_workers
+      failed_when: false
+    - name: Remove Kubernetes Node object
+      ansible.builtin.command: microk8s kubectl delete node {{ inventory_hostname }} --ignore-not-found=true --wait=false
+      delegate_to: "{{ groups['primary_control_plane'][0] }}"
+      when: inventory_hostname in removed_workers
+
+- name: Remove control planes cleanly before infrastructure deletion
+  hosts: control_planes
+  serial: 1
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Leave MicroK8s control-plane membership
+      ansible.builtin.command: microk8s leave
+      when: inventory_hostname in removed_control_planes
+    - name: Remove departed control-plane Node object
+      ansible.builtin.command: microk8s remove-node {{ inventory_hostname }} --force
+      delegate_to: "{{ control_plane_coordinator }}"
+      when: inventory_hostname in removed_control_planes
+      failed_when: false
+
+- name: Verify scale-down convergence
+  hosts: primary_control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Confirm removed nodes are absent
+      ansible.builtin.command: microk8s kubectl get node {{ item }}
+      loop: "{{ removed_workers + removed_control_planes }}"
+      register: removed_node_checks
+      changed_when: false
+      failed_when: removed_node_checks.rc == 0

@@ -1,0 +1,251 @@
+---
+- name: Prepare every MicroK8s node
+  hosts: control_planes:workers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 900
+    - name: Wait for cloud-init
+      ansible.builtin.command: cloud-init status --wait
+      register: cloud_init
+      changed_when: false
+      failed_when: false
+      ignore_unreachable: true
+    - name: Wait for SSH after cloud-init package transitions
+      ansible.builtin.wait_for_connection:
+        timeout: 900
+    - name: Verify cloud-init completed
+      ansible.builtin.command: cloud-init status --long
+      register: cloud_init_final
+      changed_when: false
+      failed_when: cloud_init_final.rc not in [0, 2]
+    - name: Upload MicroK8s installer
+      ansible.builtin.copy:
+        src: ../files/install-microk8s.sh
+        dest: /tmp/install-microk8s.sh
+        mode: "0755"
+    - name: Install and verify MicroK8s
+      ansible.builtin.command: bash /tmp/install-microk8s.sh {{ microk8s_channel }}
+      register: microk8s_install
+      changed_when: false
+
+- name: Reboot control planes sequentially when Ubuntu requires it
+  hosts: control_planes
+  serial: 1
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Check Ubuntu reboot marker on control plane
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: control_plane_os_reboot_marker
+    - name: Reboot control plane when required
+      ansible.builtin.reboot:
+        reboot_timeout: 900
+      when: control_plane_os_reboot_marker.stat.exists
+    - name: Confirm control-plane reboot marker is cleared
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: control_plane_os_reboot_after
+    - name: Require completed control-plane reboot
+      ansible.builtin.assert:
+        that: not control_plane_os_reboot_after.stat.exists
+        fail_msg: Ubuntu still requires a reboot on {{ inventory_hostname }}
+
+- name: Configure worker networking, VFIO, and hugepages
+  hosts: workers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Upload worker configuration files
+      ansible.builtin.copy:
+        src: "../files/{{ item }}"
+        dest: "/tmp/{{ item }}"
+        mode: "0755"
+      loop:
+        - configure-worker.sh
+        - bind-worker-vfio
+        - worker-vfio-bind.service
+        - verify-worker-config
+        - worker-config-verify.service
+    - name: Configure worker runtime
+      ansible.builtin.command:
+        argv:
+          - bash
+          - /tmp/configure-worker.sh
+          - "{{ hugepages_1g | string }}"
+          - "{{ hugepages_2m | string }}"
+          - "{{ data_macs | join(',') }}"
+          - "{{ vfio_macs | join(',') }}"
+          - "{{ (memory_mb - os_reserved_memory_mb) | string }}"
+      changed_when: true
+    - name: Check whether worker configuration requires reboot
+      ansible.builtin.stat:
+        path: /var/lib/opentofu-worker-reboot-required
+      register: worker_reboot_marker
+    - name: Check Ubuntu reboot marker on worker
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: worker_os_reboot_marker
+    - name: Remove worker reboot marker
+      ansible.builtin.file:
+        path: /var/lib/opentofu-worker-reboot-required
+        state: absent
+      when: worker_reboot_marker.stat.exists
+    - name: Reboot worker when required
+      ansible.builtin.reboot:
+        reboot_timeout: 900
+      when: worker_reboot_marker.stat.exists or worker_os_reboot_marker.stat.exists
+    - name: Confirm worker OS reboot marker is cleared
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: worker_os_reboot_after
+    - name: Require completed worker reboot
+      ansible.builtin.assert:
+        that: not worker_os_reboot_after.stat.exists
+        fail_msg: Ubuntu still requires a reboot on {{ inventory_hostname }}
+    - name: Verify worker runtime
+      ansible.builtin.command: /usr/local/sbin/verify-worker-config
+      changed_when: false
+
+- name: Join additional control planes
+  hosts: secondary_control_planes
+  serial: 1
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Check whether control plane is already joined
+      ansible.builtin.command: microk8s kubectl get node {{ inventory_hostname }}
+      delegate_to: "{{ groups['primary_control_plane'][0] }}"
+      register: cp_exists
+      changed_when: false
+      failed_when: false
+    - name: Create control-plane join endpoint
+      ansible.builtin.shell: |
+        set -euo pipefail
+        token=$(openssl rand -hex 16)
+        microk8s add-node --token "$token" --token-ttl 3600 >/dev/null
+        printf '%s:25000/%s\n' "{{ hostvars[groups['primary_control_plane'][0]].ansible_host }}" "$token"
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ groups['primary_control_plane'][0] }}"
+      register: cp_join_endpoint
+      when: cp_exists.rc != 0
+      no_log: true
+    - name: Join control plane
+      ansible.builtin.command: microk8s join {{ cp_join_endpoint.stdout }}
+      when: cp_exists.rc != 0
+      no_log: true
+
+- name: Join and label workers
+  hosts: workers
+  serial: 1
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Check whether worker is already joined
+      ansible.builtin.command: microk8s kubectl get node {{ inventory_hostname }}
+      delegate_to: "{{ groups['primary_control_plane'][0] }}"
+      register: worker_exists
+      changed_when: false
+      failed_when: false
+    - name: Create worker join endpoint
+      ansible.builtin.shell: |
+        set -euo pipefail
+        token=$(openssl rand -hex 16)
+        microk8s add-node --token "$token" --token-ttl 3600 >/dev/null
+        printf '%s:25000/%s\n' "{{ hostvars[groups['primary_control_plane'][0]].ansible_host }}" "$token"
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ groups['primary_control_plane'][0] }}"
+      register: worker_join_endpoint
+      when: worker_exists.rc != 0
+      no_log: true
+    - name: Join as worker-only node
+      ansible.builtin.command: microk8s join {{ worker_join_endpoint.stdout }} --worker
+      when: worker_exists.rc != 0
+      no_log: true
+    - name: Wait until worker registers and becomes Ready
+      ansible.builtin.command:
+        argv:
+          - microk8s
+          - kubectl
+          - get
+          - node
+          - "{{ inventory_hostname }}"
+          - -o
+          - 'jsonpath={.status.conditions[?(@.type=="Ready")].status}'
+      delegate_to: "{{ groups['primary_control_plane'][0] }}"
+      register: worker_ready
+      changed_when: false
+      failed_when: false
+      until: worker_ready.rc == 0 and worker_ready.stdout == "True"
+      retries: 60
+      delay: 10
+    - name: Upload label reconciler
+      ansible.builtin.copy:
+        src: ../files/configure-worker-labels.sh
+        dest: /tmp/configure-worker-labels.sh
+        mode: "0755"
+      delegate_to: "{{ groups['primary_control_plane'][0] }}"
+    - name: Reconcile worker labels
+      ansible.builtin.command:
+        argv: [bash, /tmp/configure-worker-labels.sh, "{{ inventory_hostname }}", "{{ node_labels | to_json | b64encode }}"]
+      delegate_to: "{{ groups['primary_control_plane'][0] }}"
+
+- name: Wait for control-plane quorum to stabilize
+  hosts: primary_control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for MicroK8s HA services
+      ansible.builtin.command: microk8s status --wait-ready --timeout 600
+      changed_when: false
+      register: ha_status
+      retries: 10
+      delay: 15
+      until: ha_status.rc == 0
+    - name: Verify every control plane is Ready
+      ansible.builtin.command:
+        argv: [microk8s, kubectl, wait, "node/{{ item }}", --for=condition=Ready, --timeout=600s]
+      loop: "{{ groups['control_planes'] }}"
+      changed_when: false
+
+- name: Configure client tools on every control plane
+  hosts: control_planes
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Upload control-plane tool installer
+      ansible.builtin.copy:
+        src: ../files/configure-control-plane-tools.sh
+        dest: /tmp/configure-control-plane-tools.sh
+        mode: "0755"
+    - name: Configure kubectl, completion, Helm, and k9s
+      ansible.builtin.command:
+        argv: [bash, /tmp/configure-control-plane-tools.sh, "v{{ microk8s_channel.split('/')[0] }}", "{{ k9s_version }}", "{{ kubectl_version }}", "{{ helm_version }}"]
+
+- name: Configure cluster add-ons and health gate from the primary
+  hosts: primary_control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Upload cluster scripts
+      ansible.builtin.copy:
+        src: "../files/{{ item }}"
+        dest: "/tmp/{{ item }}"
+        mode: "0755"
+      loop: [configure-addons.sh, verify-cluster.sh]
+    - name: Configure hostpath storage and upstream Multus thick plugin
+      ansible.builtin.command:
+        argv: [bash, /tmp/configure-addons.sh, "{{ hostpath_storage_enabled | string | lower }}", "{{ multus_enabled | string | lower }}", "{{ multus_version }}", "{{ multus_memory_request }}", "{{ multus_memory_limit }}"]
+      register: addon_configuration
+      retries: 6
+      delay: 20
+      until: addon_configuration.rc == 0
+    - name: Run complete cluster health gate
+      ansible.builtin.command:
+        argv: [bash, /tmp/verify-cluster.sh, "{{ (groups['control_planes'] + groups['workers']) | length | string }}", "{{ (groups['control_planes'] + groups['workers']) | sort | join(',') }}", "{{ microk8s_channel.split('/')[0] }}", "{{ hostpath_storage_enabled | string | lower }}", "{{ multus_enabled | string | lower }}", "{{ multus_version }}", "{{ multus_memory_request }}", "{{ multus_memory_limit }}", "{{ ansible_host }}", "{{ k9s_version }}", "{{ kubectl_version }}", "{{ helm_version }}"]
+      changed_when: false
